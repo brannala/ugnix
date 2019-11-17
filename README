@@ -1,0 +1,7 @@
+Static compiling library uGnix:
+gcc -c uGnix.o
+ar rcs libugnix.a uGnix.o
+
+Using library uGnix:
+gcc -c foo.c
+gcc -o foo foo.o -L. -luGnix
