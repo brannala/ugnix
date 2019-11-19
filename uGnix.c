@@ -75,20 +75,20 @@ gchar** getPopNames( struct indiv* genoTypes, GHashTable* popKeys, unsigned int*
 
 void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* popKeys, gchar** popNames, int noPops, int* noInds )
 {
-
+  int totNoInds=0; // give each individual a unique integer index
   struct indiv* genos;
   for(int i=0; i<noPops; i++)
     {
       indKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
       genos = genoTypes;
-      int currNoInds=0;
+      int currNoInds=0; // keep count of number of individuals in each population
       genos = genos->next;
       while(genos->next != NULL) 
 	{
 	  if(!strcmp(popNames[i],genos->popLabel))
 	    {
-	      if(addKey(indKeys[i],genos->indLabel,currNoInds))
-		currNoInds++;
+	      if(addKey(indKeys[i],genos->indLabel,totNoInds))
+		{ currNoInds++; totNoInds++; }
 	    }
 	  genos=genos->next;
 	}
@@ -96,24 +96,49 @@ void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* po
     }
 }
 
-void getLociNames( struct indiv* genoTypes, GHashTable* lociKeys[], GHashTable* popKeys, gchar** popNames, int noPops, long int* noLoci )
+gchar** getLociNames( struct indiv* genoTypes, GHashTable* lociKeys, GHashTable* popKeys, gchar** popNames, int noPops, unsigned int* noLoci )
 {
   struct indiv* genos;
-  for(int i=0; i<noPops; i++)
+  genos = genoTypes;
+  int currNoLoci=0;
+  genos = genos->next;
+  while(genos->next != NULL) 
     {
-      lociKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
+      if(addKey(lociKeys,genos->locusLabel,currNoLoci))
+	currNoLoci++;
+      genos=genos->next;
+    }
+  return (gchar **) g_hash_table_get_keys_as_array(lociKeys,noLoci);
+}
+
+void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], gchar** locusNames, unsigned int noLoci, int** noAlleles )
+{
+  struct indiv* genos;
+  for(int i=0; i<noLoci; i++)
+    {
+      alleleKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
       genos = genoTypes;
-      int currNoLoci=0;
+      int currNoAlleles=1; // keep count of number of alleles at each locus
       genos = genos->next;
       while(genos->next != NULL) 
 	{
-	  if(!strcmp(popNames[i],genos->popLabel))
+	  if(!strcmp(locusNames[i],genos->locusLabel))
 	    {
-	      if(addKey(lociKeys[i],genos->locusLabel,currNoLoci))
-		currNoLoci++;
+	      if(addKey(alleleKeys[i],genos->allele1,isMissing(genos->allele1) ? 0 : currNoAlleles))
+		if(!isMissing(genos->allele1)) currNoAlleles++; 
+	      if(addKey(alleleKeys[i],genos->allele2,isMissing(genos->allele2) ? 0 : currNoAlleles))
+		if(!isMissing(genos->allele2)) currNoAlleles++; 
 	    }
 	  genos=genos->next;
 	}
-      noLoci[i]=currNoLoci;
+      noAlleles[i][0]=currNoAlleles-1;
     }
+}
+
+int isMissing(char* x)
+{
+  if(strcmp("0",x)!=0 && strcmp("?",x)!=0)
+    return 0;
+  else
+    return 1;
 }

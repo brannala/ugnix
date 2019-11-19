@@ -19,16 +19,19 @@ int main(int argc, char **argv)
   int c;
   unsigned int noPops = 0;
   int noInd[MAXPOP];
-  long int noLoci[MAXPOP];
+  unsigned int noLoci;
   char** popNames;
+  char** locusNames;
   struct indiv* genoTypes;
   char fileName[100];
   
   GHashTable* popKeys;
   popKeys = g_hash_table_new(g_str_hash, g_str_equal);
   GHashTable* indKeys[MAXPOP];
-  GHashTable* lociKeys[MAXPOP];
-
+  GHashTable* lociKeys;
+  lociKeys = g_hash_table_new(g_str_hash, g_str_equal);
+  GHashTable* alleleKeys[10000];
+  int noAlleles[10000][2];
   FILE* inputFile;
   
   opterr = 0;
@@ -72,12 +75,13 @@ int main(int argc, char **argv)
 	{
 	  popNames = getPopNames(genoTypes,popKeys,&noPops); 
 	  getIndNames(genoTypes,indKeys,popKeys,popNames,noPops,noInd); 
-	  getLociNames(genoTypes,lociKeys,popKeys,popNames,noPops,noLoci); 
+	  locusNames = getLociNames(genoTypes,lociKeys,popKeys,popNames,noPops,&noLoci);
+	  getAlleleNames(genoTypes,alleleKeys,locusNames,noLoci,noAlleles); 
 	  if(printDefault)
 	    for(int i = 0; i < noPops; i++)
 	      {
 		printf("PopID: %s\t",popNames[i]);
-		printf("NoInd: %d\t NoLoci: %ld\n",noInd[i],noLoci[i]);
+		printf("NoInd: %d\t NoLoci: %d\n",noInd[i],noLoci);
 	      }
 	  if(printNoPop)
 	    printf("NoPops:\t%d\n",noPops);
@@ -85,14 +89,14 @@ int main(int argc, char **argv)
 	    for(int i = 0; i < noPops; i++)
 	      {
 		printf("PopID: %s\n",popNames[i]);
-		printKeys(indKeys[i],"IndID: %s\n");
+		printKeys(indKeys[i],"IndID: %s (%d)\n");
 	      }
 	  if(printLoci)
-	    for(int i = 0; i < noPops; i++)
-	      {
-		printf("PopID: %s\n",popNames[i]);
-		printKeys(lociKeys[i],"LocusID: %s\n");
-	      }
+	    {
+	      for(int i=0; i<noLoci; i++)
+		printf("LocusID: %s\t NoAlleles: %d\n",locusNames[i],noAlleles[i][0]);
+	      //	    printKeys(lociKeys,"LocusID: %s\n");
+	    }
 	}
       fclose(inputFile);
     }
