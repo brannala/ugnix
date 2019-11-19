@@ -34,7 +34,7 @@ void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* po
 gchar** getLociNames( struct indiv* genoTypes, GHashTable* lociKeys, GHashTable* popKeys, gchar** popNames, int noPops, unsigned int* noLoci );
  /* create hash to all unique loci names */ 
 
-void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], gchar** locusNames, unsigned int noLoci, int** noAlleles );
+void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], gchar** locusNames, unsigned int noLoci, int noAlleles[MAXLOCI][2] );
 /* create has of allele names at each locus */
 
 int isMissing(char* x);

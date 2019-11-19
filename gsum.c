@@ -31,7 +31,7 @@ int main(int argc, char **argv)
   GHashTable* lociKeys;
   lociKeys = g_hash_table_new(g_str_hash, g_str_equal);
   GHashTable* alleleKeys[10000];
-  int noAlleles[10000][2];
+  int noAlleles[MAXLOCI][2];
   FILE* inputFile;
   
   opterr = 0;
@@ -76,7 +76,7 @@ int main(int argc, char **argv)
 	  popNames = getPopNames(genoTypes,popKeys,&noPops); 
 	  getIndNames(genoTypes,indKeys,popKeys,popNames,noPops,noInd); 
 	  locusNames = getLociNames(genoTypes,lociKeys,popKeys,popNames,noPops,&noLoci);
-	  getAlleleNames(genoTypes,alleleKeys,locusNames,noLoci,noAlleles); 
+	  getAlleleNames(genoTypes,alleleKeys,locusNames,noLoci,noAlleles);
 	  if(printDefault)
 	    for(int i = 0; i < noPops; i++)
 	      {
@@ -94,7 +94,7 @@ int main(int argc, char **argv)
 	  if(printLoci)
 	    {
 	      for(int i=0; i<noLoci; i++)
-		printf("LocusID: %s\t NoAlleles: %d\n",locusNames[i],noAlleles[i][0]);
+		printf("LocusID: %s\t NoAlleles: %d\t Missing: %s\n",locusNames[i],noAlleles[i][0],noAlleles[i][1] ? "Y" : "N");
 	      //	    printKeys(lociKeys,"LocusID: %s\n");
 	    }
 	}

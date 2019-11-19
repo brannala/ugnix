@@ -111,13 +111,20 @@ gchar** getLociNames( struct indiv* genoTypes, GHashTable* lociKeys, GHashTable*
   return (gchar **) g_hash_table_get_keys_as_array(lociKeys,noLoci);
 }
 
-void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], gchar** locusNames, unsigned int noLoci, int** noAlleles )
+void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], gchar** locusNames, unsigned int noLoci, int noAlleles[MAXLOCI][2] )
 {
   struct indiv* genos;
   for(int i=0; i<noLoci; i++)
     {
+      if((noLoci>1000)&&((i % 100)==0))
+	{
+	  printf("Progress %.2f %s",i/(noLoci+0.0),"%");
+	  printf("\r");
+	  fflush(stdout);
+	}
       alleleKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
       genos = genoTypes;
+      int missing=0;
       int currNoAlleles=1; // keep count of number of alleles at each locus
       genos = genos->next;
       while(genos->next != NULL) 
@@ -125,13 +132,24 @@ void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], gchar** 
 	  if(!strcmp(locusNames[i],genos->locusLabel))
 	    {
 	      if(addKey(alleleKeys[i],genos->allele1,isMissing(genos->allele1) ? 0 : currNoAlleles))
-		if(!isMissing(genos->allele1)) currNoAlleles++; 
+		{
+		  if(!isMissing(genos->allele1))
+		    currNoAlleles++;
+		  else
+		    missing=1;
+		}
 	      if(addKey(alleleKeys[i],genos->allele2,isMissing(genos->allele2) ? 0 : currNoAlleles))
-		if(!isMissing(genos->allele2)) currNoAlleles++; 
+		{
+		  if(!isMissing(genos->allele2))
+		    currNoAlleles++;
+		  else
+		    missing=1;
+		}
 	    }
 	  genos=genos->next;
 	}
-      noAlleles[i][0]=currNoAlleles-1;
+      noAlleles[i][0] = currNoAlleles-1;
+      noAlleles[i][1] = missing;
     }
 }
 
