@@ -6,7 +6,8 @@
 #include "uGnix.h"
 #endif
 
-struct indiv* readGFile(FILE* inputFile)
+/* read genotype file in BA3 format */
+struct indiv* readGFile(FILE* inputFile) 
 {
   int nvars;
   struct indiv* head;
@@ -29,12 +30,13 @@ struct indiv* readGFile(FILE* inputFile)
   return(head);
 }
 
-
+/* used by printKeys to iterate all keys and values in hash */
 void iterator(gpointer key, gpointer value, gpointer user_data)
 {
   printf(user_data, key, GPOINTER_TO_INT(value));
 }
 
+/* try to add key and value. return FALSE if key already exists */
 gboolean addKey(GHashTable* hash, char* mykey, int index)
 {
   gboolean y=FALSE;
@@ -44,21 +46,34 @@ gboolean addKey(GHashTable* hash, char* mykey, int index)
     return y;
 }
 
+/* get number of keys in hash */
 int noKeys(GHashTable* hash)
 {
   return g_hash_table_size(hash);
 }
 
+/* convert key to index value */
 int keyToIndex(GHashTable* hash, char* mykey)
 {
   return GPOINTER_TO_INT(g_hash_table_lookup(hash, mykey));
 }
 
+/* print all key value pairs in hash */
 void printKeys(GHashTable* hash,char* phrase)
 {
   g_hash_table_foreach(hash, (GHFunc)iterator, phrase);
 }
 
+/* returns 1 (true) if missing data exist and o (false) otherwise */
+int isMissing(char* x)
+{
+  if(strcmp("0",x)!=0 && strcmp("?",x)!=0)
+    return 0;
+  else
+    return 1;
+}
+
+/* create a hash of popKeys, set number of populations (noPops) and return array of population names/keys */
 gchar** getPopNames( struct indiv* genoTypes, GHashTable* popKeys, unsigned int* noPops)
 {
   struct indiv* genos = genoTypes;
@@ -73,6 +88,7 @@ gchar** getPopNames( struct indiv* genoTypes, GHashTable* popKeys, unsigned int*
   return (gchar **) g_hash_table_get_keys_as_array(popKeys,noPops);
 }
 
+/* create a hash of names of all individuals from all populations assigning each a index in (0,noInds-1), set array of noInds per population */
 void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* popKeys, gchar** popNames, int noPops, int* noInds )
 {
   int totNoInds=0; // give each individual a unique integer index
@@ -96,6 +112,7 @@ void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* po
     }
 }
 
+/* create a hash of locus names assigning each an integer index in (0,noLoci-1). Set noLoci and return array of locus names/keys */
 gchar** getLociNames( struct indiv* genoTypes, GHashTable* lociKeys, GHashTable* popKeys, gchar** popNames, int noPops, unsigned int* noLoci )
 {
   struct indiv* genos;
@@ -111,52 +128,37 @@ gchar** getLociNames( struct indiv* genoTypes, GHashTable* lociKeys, GHashTable*
   return (gchar **) g_hash_table_get_keys_as_array(lociKeys,noLoci);
 }
 
-void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], gchar** locusNames, unsigned int noLoci, int noAlleles[MAXLOCI][2] )
+/* create a hash of allele names for each locus and indicate whether missing data exists. Return array of locus-specific allele counts (+1) and 0/1 for missing data */
+void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], GHashTable* locusKeys, unsigned int noLoci, int noAlleles[MAXLOCI][2] )
 {
   struct indiv* genos;
-  for(int i=0; i<noLoci; i++)
+  for(int i=0; i<MAXLOCI; i++)
     {
-      if((noLoci>1000)&&((i % 100)==0))
-	{
-	  printf("Progress %.2f %s",i/(noLoci+0.0),"%");
-	  printf("\r");
-	  fflush(stdout);
-	}
-      alleleKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
-      genos = genoTypes;
-      int missing=0;
-      int currNoAlleles=1; // keep count of number of alleles at each locus
-      genos = genos->next;
-      while(genos->next != NULL) 
-	{
-	  if(!strcmp(locusNames[i],genos->locusLabel))
+      noAlleles[i][0] = 1;
+      noAlleles[i][1] = 0;
+    }
+  for(int i=0; i<noLoci; i++)
+    alleleKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
+  genos = genoTypes;
+  genos = genos->next;
+  while(genos->next != NULL) 
+    {
+	  if(addKey(alleleKeys[keyToIndex(locusKeys, genos->locusLabel)],genos->allele1,isMissing(genos->allele1) ? 0 : noAlleles[keyToIndex(locusKeys, genos->locusLabel)][0]))
 	    {
-	      if(addKey(alleleKeys[i],genos->allele1,isMissing(genos->allele1) ? 0 : currNoAlleles))
-		{
-		  if(!isMissing(genos->allele1))
-		    currNoAlleles++;
-		  else
-		    missing=1;
-		}
-	      if(addKey(alleleKeys[i],genos->allele2,isMissing(genos->allele2) ? 0 : currNoAlleles))
-		{
-		  if(!isMissing(genos->allele2))
-		    currNoAlleles++;
-		  else
-		    missing=1;
-		}
+	      if(!isMissing(genos->allele1))
+		noAlleles[keyToIndex(locusKeys, genos->locusLabel)][0]=noAlleles[keyToIndex(locusKeys, genos->locusLabel)][0]+1;
+	      else
+		noAlleles[keyToIndex(locusKeys, genos->locusLabel)][1]=1;
+	    }
+	  if(addKey(alleleKeys[keyToIndex(locusKeys, genos->locusLabel)],genos->allele2,isMissing(genos->allele2) ? 0 : noAlleles[keyToIndex(locusKeys, genos->locusLabel)][0]))
+	    {
+	      if(!isMissing(genos->allele2))
+		noAlleles[keyToIndex(locusKeys, genos->locusLabel)][0]=noAlleles[keyToIndex(locusKeys, genos->locusLabel)][0]+1;
+	      else
+		noAlleles[keyToIndex(locusKeys, genos->locusLabel)][1]=1;
 	    }
 	  genos=genos->next;
-	}
-      noAlleles[i][0] = currNoAlleles-1;
-      noAlleles[i][1] = missing;
     }
 }
 
-int isMissing(char* x)
-{
-  if(strcmp("0",x)!=0 && strcmp("?",x)!=0)
-    return 0;
-  else
-    return 1;
-}
+

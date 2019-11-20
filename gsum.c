@@ -76,7 +76,7 @@ int main(int argc, char **argv)
 	  popNames = getPopNames(genoTypes,popKeys,&noPops); 
 	  getIndNames(genoTypes,indKeys,popKeys,popNames,noPops,noInd); 
 	  locusNames = getLociNames(genoTypes,lociKeys,popKeys,popNames,noPops,&noLoci);
-	  getAlleleNames(genoTypes,alleleKeys,locusNames,noLoci,noAlleles);
+	  getAlleleNames(genoTypes,alleleKeys,lociKeys,noLoci,noAlleles);
 	  if(printDefault)
 	    for(int i = 0; i < noPops; i++)
 	      {
@@ -94,7 +94,7 @@ int main(int argc, char **argv)
 	  if(printLoci)
 	    {
 	      for(int i=0; i<noLoci; i++)
-		printf("LocusID: %s\t NoAlleles: %d\t Missing: %s\n",locusNames[i],noAlleles[i][0],noAlleles[i][1] ? "Y" : "N");
+		printf("LocusID: %s\t NoAlleles: %d\t Missing: %s\n",locusNames[i],noAlleles[keyToIndex(lociKeys,locusNames[i])][0]-1,noAlleles[keyToIndex(lociKeys,locusNames[i])][1] ? "Y" : "N");
 	      //	    printKeys(lociKeys,"LocusID: %s\n");
 	    }
 	}
