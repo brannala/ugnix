@@ -1,7 +1,7 @@
 #define MAXLN 100 
 #define MAXIND 10000
 #define MAXPOP 500
-#define MAXLOCI 50000
+#define MAXLOCI 100000
 
 struct indiv
 {
@@ -15,6 +15,10 @@ struct indiv
   
 struct indiv* readGFile(FILE* inputFile);
 
+int matToArr(int ind, int locus, int allele, int noInd, int noLoci);
+
+void fillDataMatrix(struct indiv* genoTypes, int** dataMat, GHashTable* indKeys[], GHashTable* lociKeys, GHashTable* alleleKeys[], GHashTable* popKeys, int noLoci, int totNoInd);
+
 void iterator(gpointer key, gpointer value, gpointer user_data);
 
 gboolean addKey(GHashTable* hash, char* mykey, int index);
@@ -26,15 +30,11 @@ int keyToIndex(GHashTable* hash, char* mykey);
 void printKeys(GHashTable* hash, char* phrase);
 
 gchar** getPopNames( struct indiv* genoTypes, GHashTable* popKeys, unsigned int* noPops);
-/* creates hash to all unique population names and calculates noPops */
 
-void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* popKeys, gchar** popNames, int noPops, int* noInd );
-/* creates hash to all unique indIDs for each population */
+void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* popKeys, gchar** popNames, int noPops, int* noInd, int* totNoInds);
 
 gchar** getLociNames( struct indiv* genoTypes, GHashTable* lociKeys, GHashTable* popKeys, gchar** popNames, int noPops, unsigned int* noLoci );
- /* create hash to all unique loci names */ 
 
 void getAlleleNames( struct indiv* genoTypes, GHashTable* alleleKeys[], GHashTable* locusKeys, unsigned int noLoci, int noAlleles[MAXLOCI][2] );
-/* create has of allele names at each locus */
 
 int isMissing(char* x);

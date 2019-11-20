@@ -9,7 +9,7 @@
 #include "uGnix.h"
 #include <unistd.h>
 #endif
-                                                                                        
+
 int main(int argc, char **argv)
 {
   int printInd = 0;
@@ -25,7 +25,7 @@ int main(int argc, char **argv)
   char** locusNames;
   struct indiv* genoTypes;
   char fileName[100];
-  
+  int** dataMat;
   GHashTable* popKeys;
   popKeys = g_hash_table_new(g_str_hash, g_str_equal);
   GHashTable* indKeys[MAXPOP];
@@ -79,31 +79,14 @@ int main(int argc, char **argv)
 	  locusNames = getLociNames(genoTypes,lociKeys,popKeys,popNames,noPops,&noLoci);
 	  getAlleleNames(genoTypes,alleleKeys,lociKeys,noLoci,noAlleles);
 	  if(printDefault)
-	    {
-	      printf("NoPops: %d\t Total_NoInds: %d\n",noPops,totNoInd);
-	      for(int i = 0; i < noPops; i++)
-		{
-		  printf("PopID: %s\t",popNames[i]);
-		  printf("NoInd: %d\t NoLoci: %d\n",noInd[i],noLoci);
-		}
-	    }
-	  if(printNoPop)
-	    printf("NoPops:\t%d\n",noPops);
-	  if(printInd)
 	    for(int i = 0; i < noPops; i++)
 	      {
-		printf("PopID: %s\n",popNames[i]);
-		printKeys(indKeys[i],"IndID: %s (%d)\n");
+		fillDataMatrix(genoTypes,dataMat,indKeys,lociKeys,alleleKeys,popKeys,noLoci,totNoInd);
+		// printf("PopID: %s\t",popNames[i]);
+		// printf("PopIndex: %d\n",keyToIndex(popKeys, popNames[i]));
+		// printf("NoInd: %d\t NoLoci: %d\n",noInd[i],noLoci);
+
 	      }
-	  if(printLoci)
-	    {
-	      for(int i=0; i<noLoci; i++)
-		printf("LocusID: %s\t NoAlleles: %d\t Missing: %s\n",locusNames[i],noAlleles[keyToIndex(lociKeys,locusNames[i])][0]-1,noAlleles[keyToIndex(lociKeys,locusNames[i])][1] ? "Y" : "N");
-	      //	    printKeys(lociKeys,"LocusID: %s\n");
-	    }
 	}
-      fclose(inputFile);
     }
 }
-
-

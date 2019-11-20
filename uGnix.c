@@ -30,6 +30,26 @@ struct indiv* readGFile(FILE* inputFile)
   return(head);
 }
 
+/* get index of array from matrix coordinates */
+int matToArr(int ind, int locus, int allele, int noInd, int noLoci)
+{
+  return(noInd*noLoci*allele+noInd*locus+ind);
+}
+
+void fillDataMatrix(struct indiv* genoTypes, int** dataMat, GHashTable* indKeys[], GHashTable* lociKeys, GHashTable* alleleKeys[], GHashTable* popKeys, int noLoci, int totNoInd)
+{
+  struct indiv* genos;
+  genos = genoTypes;
+  genos = genos->next;
+  while(genos->next != NULL) 
+    {
+      printf("indiv: %s, locus: %s, allele1: %s, allele2: %s, arrInd: %d\n",genos->indLabel,genos->locusLabel,genos->allele1,genos->allele2,matToArr(keyToIndex(indKeys[keyToIndex(popKeys, genos->popLabel)], genos->indLabel),keyToIndex(lociKeys,genos->locusLabel),0,totNoInd,noLoci));
+            printf("indiv: %s, locus: %s, allele1: %s, allele2: %s, arrInd: %d\n",genos->indLabel,genos->locusLabel,genos->allele1,genos->allele2,matToArr(keyToIndex(indKeys[keyToIndex(popKeys, genos->popLabel)], genos->indLabel),keyToIndex(lociKeys,genos->locusLabel),1,totNoInd,noLoci));
+      genos = genos->next;
+    }
+}
+
+
 /* used by printKeys to iterate all keys and values in hash */
 void iterator(gpointer key, gpointer value, gpointer user_data)
 {
@@ -89,13 +109,13 @@ gchar** getPopNames( struct indiv* genoTypes, GHashTable* popKeys, unsigned int*
 }
 
 /* create a hash of names of all individuals from all populations assigning each a index in (0,noInds-1), set array of noInds per population */
-void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* popKeys, gchar** popNames, int noPops, int* noInds )
+void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* popKeys, gchar** popNames, int noPops, int* noInds, int* totNoInds)
 {
-  int totNoInds=0; // give each individual a unique integer index
+  *totNoInds=0; // give each individual a unique integer index
   struct indiv* genos;
   for(int i=0; i<noPops; i++)
     {
-      indKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
+      indKeys[keyToIndex(popKeys,popNames[i])] = g_hash_table_new(g_str_hash, g_str_equal);
       genos = genoTypes;
       int currNoInds=0; // keep count of number of individuals in each population
       genos = genos->next;
@@ -103,12 +123,12 @@ void getIndNames( struct indiv* genoTypes, GHashTable* indKeys[], GHashTable* po
 	{
 	  if(!strcmp(popNames[i],genos->popLabel))
 	    {
-	      if(addKey(indKeys[i],genos->indLabel,totNoInds))
-		{ currNoInds++; totNoInds++; }
+	      if(addKey(indKeys[keyToIndex(popKeys,popNames[i])],genos->indLabel,*totNoInds))
+		{ currNoInds++; *totNoInds = *totNoInds + 1; }
 	    }
 	  genos=genos->next;
 	}
-      noInds[i]=currNoInds;
+      noInds[keyToIndex(popKeys,popNames[i])]=currNoInds;
     }
 }
 
