@@ -17,7 +17,7 @@ struct indiv* readGFile(FILE* inputFile);
 
 int matToArr(int ind, int locus, int allele, int noInd, int noLoci);
 
-void fillDataMatrix(struct indiv* genoTypes, int** dataMat, GHashTable* indKeys[], GHashTable* lociKeys, GHashTable* alleleKeys[], GHashTable* popKeys, int noLoci, int totNoInd);
+void fillData(struct indiv* genoTypes, int* dataArray, GHashTable* indKeys[], GHashTable* lociKeys, GHashTable* alleleKeys[], GHashTable* popKeys, int noLoci, int totNoInd);
 
 void iterator(gpointer key, gpointer value, gpointer user_data);
 

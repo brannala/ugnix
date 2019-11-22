@@ -6,6 +6,8 @@
 #include "uGnix.h"
 #endif
 
+#define DEBUG 0
+
 /* read genotype file in BA3 format */
 struct indiv* readGFile(FILE* inputFile) 
 {
@@ -36,15 +38,18 @@ int matToArr(int ind, int locus, int allele, int noInd, int noLoci)
   return(noInd*noLoci*allele+noInd*locus+ind);
 }
 
-void fillDataMatrix(struct indiv* genoTypes, int** dataMat, GHashTable* indKeys[], GHashTable* lociKeys, GHashTable* alleleKeys[], GHashTable* popKeys, int noLoci, int totNoInd)
+void fillData(struct indiv* genoTypes, int* dataArray, GHashTable* indKeys[], GHashTable* lociKeys, GHashTable* alleleKeys[], GHashTable* popKeys, int noLoci, int totNoInd)
 {
   struct indiv* genos;
+
   genos = genoTypes;
   genos = genos->next;
   while(genos->next != NULL) 
     {
-      printf("indiv: %s, locus: %s, allele1: %s, allele2: %s, arrInd: %d\n",genos->indLabel,genos->locusLabel,genos->allele1,genos->allele2,matToArr(keyToIndex(indKeys[keyToIndex(popKeys, genos->popLabel)], genos->indLabel),keyToIndex(lociKeys,genos->locusLabel),0,totNoInd,noLoci));
-            printf("indiv: %s, locus: %s, allele1: %s, allele2: %s, arrInd: %d\n",genos->indLabel,genos->locusLabel,genos->allele1,genos->allele2,matToArr(keyToIndex(indKeys[keyToIndex(popKeys, genos->popLabel)], genos->indLabel),keyToIndex(lociKeys,genos->locusLabel),1,totNoInd,noLoci));
+      dataArray[matToArr(keyToIndex(indKeys[keyToIndex(popKeys, genos->popLabel)], genos->indLabel),keyToIndex(lociKeys,genos->locusLabel),0,totNoInd,noLoci)] =
+	keyToIndex(alleleKeys[keyToIndex(lociKeys,genos->locusLabel)],genos->allele1);
+      dataArray[matToArr(keyToIndex(indKeys[keyToIndex(popKeys, genos->popLabel)], genos->indLabel),keyToIndex(lociKeys,genos->locusLabel),1,totNoInd,noLoci)] =
+      keyToIndex(alleleKeys[keyToIndex(lociKeys,genos->locusLabel)],genos->allele2); 
       genos = genos->next;
     }
 }

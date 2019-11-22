@@ -25,7 +25,7 @@ int main(int argc, char **argv)
   char** locusNames;
   struct indiv* genoTypes;
   char fileName[100];
-  int** dataMat;
+  int* dataArray;
   GHashTable* popKeys;
   popKeys = g_hash_table_new(g_str_hash, g_str_equal);
   GHashTable* indKeys[MAXPOP];
@@ -78,15 +78,28 @@ int main(int argc, char **argv)
 	  getIndNames(genoTypes,indKeys,popKeys,popNames,noPops,noInd,&totNoInd); 
 	  locusNames = getLociNames(genoTypes,lociKeys,popKeys,popNames,noPops,&noLoci);
 	  getAlleleNames(genoTypes,alleleKeys,lociKeys,noLoci,noAlleles);
+	  dataArray = malloc((noLoci*totNoInd*2+1) * sizeof(int));
 	  if(printDefault)
-	    for(int i = 0; i < noPops; i++)
+	    {
+	      fillData(genoTypes,dataArray,indKeys,lociKeys,alleleKeys,popKeys,noLoci,totNoInd);
+	      printf("dataArray[0]: %d dataArray[noLoci*totNoInd*2]: %d", dataArray[0],dataArray[noLoci*totNoInd*2]);
+	      for(int i=0; i<totNoInd; i++)
+		for(int j=0; j<noLoci; j++)
+		  {
+		    printf("Indiv %d, locus %d, allele1: %d, allele2: %d\n",
+			   i,j,dataArray[matToArr(i,j,0,totNoInd,noLoci)],
+			   dataArray[matToArr(i,j,1,totNoInd,noLoci)]);
+		    
+		  }
+	      for(int i = 0; i < noPops; i++)
 	      {
-		fillDataMatrix(genoTypes,dataMat,indKeys,lociKeys,alleleKeys,popKeys,noLoci,totNoInd);
+
 		// printf("PopID: %s\t",popNames[i]);
 		// printf("PopIndex: %d\n",keyToIndex(popKeys, popNames[i]));
 		// printf("NoInd: %d\t NoLoci: %d\n",noInd[i],noLoci);
 
 	      }
+	    }
 	}
     }
 }
