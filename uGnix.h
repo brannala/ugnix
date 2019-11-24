@@ -25,7 +25,10 @@
 #define PROG_VERSION "v" PLL_C2S(VERSION_MAJOR) "." PLL_C2S(VERSION_MINOR) "." \
         PLL_C2S(VERSION_PATCH)
 
+/* MTOA maps matrix indexes to array index using row-major order */
+/* N1=totNoInd*noLoci N2=totNoInd I=ind L=locus A=allele */
 
+#define MTOA(I,L,A,N1,N2) ((N1)*(A))+((N2)*(L))+(I) 
 
 
 struct indiv
@@ -62,8 +65,6 @@ struct indiv* readGFile(FILE* inputFile);
 void fillheader(const char version[]);
 
 void show_header();
-
-int matToArr(int ind, int locus, int allele, datapar dpar);
 
 void fillData(struct indiv* genoTypes, int* dataArray, dhash* dh, datapar dpar);
 

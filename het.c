@@ -28,6 +28,41 @@ FILE* inputFile;
 char fileName[100];
 char version[] = "het";
 
+static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
+{
+  int n1 = dpar.totNoInd*dpar.noLoci;
+  int n2 = dpar.totNoInd;
+  if(type == 'i')
+    {
+      gchar** indList[MAXPOP];
+      for(int i=0; i<dpar.noPops; i++)
+	{
+	  printf("Population: %s\n",dpar.popNames[i]);
+	  unsigned int nInds;
+	  indList[keyToIndex(dh->popKeys,dpar.popNames[i])] = (gchar **) g_hash_table_get_keys_as_array(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],&nInds);
+	  for(int j=0; j<nInds; j++)
+	    {
+	      int indIndex = keyToIndex(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j]);
+	      int total_genotypes = 0;
+	      int total_hets = 0;
+	      for(int k=0; k<dpar.noLoci; k++)
+		{
+		  int a1 = dataArray[MTOA(indIndex,k,0,n1,n2)];
+		  int a2 = dataArray[MTOA(indIndex,k,1,n1,n2)];
+		  if((a1!=0)&&(a2!=0))
+		    {
+		      total_genotypes++;
+		      if(a1 != a2)
+			total_hets++;
+		    }
+		}
+  	      printf("Indiv: %s Heter: %f\n",indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],(total_hets+0.0)/total_genotypes);
+	    }
+	}
+    }
+}
+
+
 int main(int argc, char **argv)
 {
   struct indiv* genoTypes;
@@ -85,17 +120,24 @@ int main(int argc, char **argv)
 	  dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
 	  if(opt_print_default)
 	    {
+	      
+
+	      
+	      int n1 = dpar.totNoInd*dpar.noLoci;
+	      int n2 = dpar.totNoInd;
 	      fillData(genoTypes,dataArray,&dh,dpar);
+	      heter(dataArray,&dh,dpar,'i');
+	      /*
 	      printf("dataArray[0]: %d dataArray[dpar.noLoci*dpar.totNoInd*2]: %d",
 		     dataArray[0],dataArray[dpar.noLoci*dpar.totNoInd*2]);
 	      for(int i=0; i<dpar.totNoInd; i++)
 		for(int j=0; j<dpar.noLoci; j++)
 		  {
 		    printf("Indiv %d, locus %d, allele1: %d, allele2: %d\n",
-			   i,j,dataArray[matToArr(i,j,0,dpar)],
-			   dataArray[matToArr(i,j,1,dpar)]);
+			   i,j,dataArray[MTOA(i,j,0,n1,n2)],
+			   dataArray[MTOA(i,j,1,n1,n2)]);
 		    
-		  }
+			   }*/
 	      for(int i = 0; i < dpar.noPops; i++)
 	      {
 

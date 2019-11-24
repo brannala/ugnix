@@ -48,30 +48,24 @@ struct indiv* readGFile(FILE* inputFile)
   return(head);
 }
 
-/* get index of array from matrix coordinates */
-
-int matToArr(int ind, int locus, int allele, datapar dpar)
-{
-  return(dpar.totNoInd*dpar.noLoci*allele+dpar.totNoInd*locus+ind);
-}
-
 void fillData(struct indiv* genoTypes, int* dataArray, dhash* dh, datapar dpar)
 {
+  int n1 = dpar.totNoInd*dpar.noLoci;
+  int n2 = dpar.totNoInd;
   struct indiv* genos;
   genos = genoTypes;
   genos = genos->next;
-  while(genos->next != NULL) 
+  while(genos != NULL) 
     {
-      dataArray[matToArr(keyToIndex(dh->indKeys[keyToIndex(dh->popKeys, genos->popLabel)],
-				    genos->indLabel),keyToIndex(dh->lociKeys,genos->locusLabel),0,dpar)] =
+      dataArray[MTOA(keyToIndex(dh->indKeys[keyToIndex(dh->popKeys, genos->popLabel)],
+				genos->indLabel),keyToIndex(dh->lociKeys,genos->locusLabel),0,n1,n2)] =
 	keyToIndex(dh->alleleKeys[keyToIndex(dh->lociKeys,genos->locusLabel)],genos->allele1);
-      dataArray[matToArr(keyToIndex(dh->indKeys[keyToIndex(dh->popKeys, genos->popLabel)],
-				    genos->indLabel),keyToIndex(dh->lociKeys,genos->locusLabel),1,dpar)] =
+      dataArray[MTOA(keyToIndex(dh->indKeys[keyToIndex(dh->popKeys, genos->popLabel)],
+				genos->indLabel),keyToIndex(dh->lociKeys,genos->locusLabel),1,n1,n2)] =
       keyToIndex(dh->alleleKeys[keyToIndex(dh->lociKeys,genos->locusLabel)],genos->allele2); 
       genos = genos->next;
     }
 }
-
 
 /* used by printKeys to iterate all keys and values in hash */
 
@@ -130,7 +124,7 @@ void getPopNames( struct indiv* genoTypes, dhash* dh, datapar* dpar)
   struct indiv* genos = genoTypes;
   int currNoPops=0;
   genos = genos->next;
-  while(genos->next != NULL) 
+  while(genos != NULL) 
     {
       if(addKey(dh->popKeys,genos->popLabel,currNoPops))
 	currNoPops++;
@@ -153,7 +147,7 @@ void getIndNames( struct indiv* genoTypes, dhash* dh, datapar* dpar)
       genos = genoTypes;
       int currNoInds=0; // keep count of number of individuals in each population
       genos = genos->next;
-      while(genos->next != NULL) 
+      while(genos != NULL) 
 	{
 	  if(!strcmp(dpar->popNames[i],genos->popLabel))
 	    {
@@ -176,7 +170,7 @@ void getLociNames( struct indiv* genoTypes, dhash* dh, datapar* dpar)
   genos = genoTypes;
   int currNoLoci=0;
   genos = genos->next;
-  while(genos->next != NULL) 
+  while(genos != NULL) 
     {
       if(addKey(dh->lociKeys,genos->locusLabel,currNoLoci))
 	currNoLoci++;
@@ -200,7 +194,7 @@ void getAlleleNames( struct indiv* genoTypes, dhash* dh, datapar* dpar)
     dh->alleleKeys[i] = g_hash_table_new(g_str_hash, g_str_equal);
   genos = genoTypes;
   genos = genos->next;
-  while(genos->next != NULL) 
+  while(genos != NULL) 
     {
 	  if(addKey(dh->alleleKeys[keyToIndex(dh->lociKeys, genos->locusLabel)],
 		    genos->allele1, isMissing(genos->allele1) ? 0 :
