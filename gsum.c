@@ -83,12 +83,13 @@ int main(int argc, char **argv)
 	  getDataParams(genoTypes,&dh,&dpar);
 	  if(opt_print_default)
 	    {
-	      printf("NoPops: %d\t Total_NoInds: %d\n",dpar.noPops,dpar.totNoInd);
+	      printf("no_pop: %d\t tot_no_ind: %d\n\n",dpar.noPops,dpar.totNoInd);
 	      for(int i = 0; i < dpar.noPops; i++)
 		{
 		  printf("PopID: %s\t",dpar.popNames[i]);
-		  printf("NoInd: %d\t NoLoci: %d\n",dpar.noInd[i],dpar.noLoci);
+		  printf("no_ind: %d\t no_loci: %d\n",dpar.noInd[i],dpar.noLoci);
 		}
+	      printf("\n");
 		} 
 	  if(opt_print_no_pop)
 	    for(int i = 0; i < dpar.noPops; i++)
@@ -104,7 +105,7 @@ int main(int argc, char **argv)
 	  if(opt_print_loci)
 	    {
 	      for(int i=0; i<dpar.noLoci; i++)
-		printf("LocusID: %s\t NoAlleles: %d\t Missing: %s\n",dpar.locusNames[i],
+		printf("LocID: %s\t no_alleles: %d\t missing: %s\n",dpar.locusNames[i],
 		       dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][0]-1,
 		       dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][1] ? "Y" : "N");
 	    } 

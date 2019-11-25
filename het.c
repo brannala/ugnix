@@ -37,14 +37,17 @@ static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
       gchar** indList[MAXPOP];
       for(int i=0; i<dpar.noPops; i++)
 	{
-	  printf("Population: %s\n",dpar.popNames[i]);
 	  unsigned int nInds;
-	  indList[keyToIndex(dh->popKeys,dpar.popNames[i])] = (gchar **) g_hash_table_get_keys_as_array(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],&nInds);
+	  indList[keyToIndex(dh->popKeys,dpar.popNames[i])] =
+	    (gchar **) g_hash_table_get_keys_as_array(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],&nInds);
 	  for(int j=0; j<nInds; j++)
 	    {
-	      int indIndex = keyToIndex(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j]);
+	      int indIndex = keyToIndex(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],
+					indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j]);
 	      int total_genotypes = 0;
 	      int total_hets = 0;
+	      double h1 = 0;
+	      double sd_h1 = 0;
 	      for(int k=0; k<dpar.noLoci; k++)
 		{
 		  int a1 = dataArray[MTOA(indIndex,k,0,n1,n2)];
@@ -55,8 +58,15 @@ static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
 		      if(a1 != a2)
 			total_hets++;
 		    }
+		  h1 = (total_hets+0.0)/total_genotypes;
+		  sd_h1 = sqrt(h1*(1-h1)/total_genotypes);
 		}
-  	      printf("Indiv: %s Heter: %f\n",indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],(total_hets+0.0)/total_genotypes);
+	      if(total_genotypes>0)
+		printf("PopID: %s\tIndID: %s\tH1: %.3f +/- %.3f\n",dpar.popNames[i],
+		     indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],h1,(sd_h1*1.96));
+	      else
+		printf("PopID: %s\tIndID: %s\tH1: %s +/- %s",dpar.popNames[i],
+		       indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],"M","M");
 	    }
 	}
     }
@@ -118,14 +128,9 @@ int main(int argc, char **argv)
 	{
 	  getDataParams(genoTypes,&dh,&dpar);
 	  dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
-	  if(opt_print_default)
+	  fillData(genoTypes,dataArray,&dh,dpar);
+	  if(opt_print_ind)
 	    {
-	      
-
-	      
-	      int n1 = dpar.totNoInd*dpar.noLoci;
-	      int n2 = dpar.totNoInd;
-	      fillData(genoTypes,dataArray,&dh,dpar);
 	      heter(dataArray,&dh,dpar,'i');
 	      /*
 	      printf("dataArray[0]: %d dataArray[dpar.noLoci*dpar.totNoInd*2]: %d",

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <gmodule.h>
+#include <math.h>
 #include <unistd.h>
 
 #define MAXLN 1000 

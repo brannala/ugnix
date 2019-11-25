@@ -3,9 +3,9 @@ CC = gcc
 CFLAGS = -Wall -g
 all: gsum het
 het: het.o uGnix.o -lglib-2.0
-	$(CC) het.o uGnix.o -lglib-2.0 -o het
+	$(CC) het.o uGnix.o -lglib-2.0 -lm -o het
 gsum: gsum.o uGnix.o -lglib-2.0
-	$(CC)  gsum.o uGnix.o -lglib-2.0 -o gsum
+	$(CC)  gsum.o uGnix.o -lglib-2.0 -lm -o gsum
 gsum.o: gsum.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -c gsum.c
 het.o: het.c
