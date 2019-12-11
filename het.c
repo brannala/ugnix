@@ -19,14 +19,27 @@
 #include "uGnix.h"
 
 /* options */
-int opt_print_ind = 0; /* print labels of individuals */
-int opt_print_no_pop = 0; /* print number of populations */
-int opt_print_loci = 0; /* print details for each locus */
-int opt_print_default = 0; /* print default summary (population names, noInd, noLoci) */
+int opt_heter_ind = 0; /* print average heterozygosity for each individual */
+int opt_heter_loci = 0; /* print average heterozygosity for each locus */
+int opt_help = 0; /* print help message */
+int opt_default = 0; /* print help message */
 
 FILE* inputFile;
 char fileName[100];
 char version[] = "het";
+
+static void print_msg()
+{
+  printf("Usage: het [OPTION]... FILE\n Try 'het -h' for more information.\n");
+}
+
+static void print_help()
+{
+  printf("Heterozygosity calculations: \n"
+	 "-i print average heterozygosity for each individual\n"
+	 "-l print average heterozygosity for each locus\n"
+	 "-a print heterozygosity for each individual at each locus\n");
+}
 
 static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
 {
@@ -89,17 +102,17 @@ int main(int argc, char **argv)
   
   opterr = 0;
   int c;
-  while((c = getopt(argc, argv, "lpi")) != -1)
+  while((c = getopt(argc, argv, "lih")) != -1)
     switch(c)
       {
       case 'i':
-	opt_print_ind = 1;
+	opt_heter_ind = 1;
 	break;
-      case 'p':
-	opt_print_no_pop = 1;
+       case 'l':
+	opt_heter_loci = 1;
 	break;
-      case 'l':
-	opt_print_loci = 1;
+      case 'h':
+	opt_help = 1;
 	break;
       case '?':
         if (isprint (optopt))
@@ -111,11 +124,11 @@ int main(int argc, char **argv)
 	abort();
       }
   
-  if(optind == 1) opt_print_default=1;
+  if(optind == 1) opt_default=1;
   if(optind < argc)
     strcpy(fileName,argv[optind]);
   else
-    { printf("Missing filename argument!\n"); return 1; }
+    { if(opt_help) print_help(); else print_msg(); return 1; }
   inputFile = fopen(fileName,"r");
   if( inputFile == NULL )
     printf("%s: stat of %s failed: no such file\n",argv[0],fileName);
@@ -129,28 +142,13 @@ int main(int argc, char **argv)
 	  getDataParams(genoTypes,&dh,&dpar);
 	  dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
 	  fillData(genoTypes,dataArray,&dh,dpar);
-	  if(opt_print_ind)
+	  if(opt_heter_ind)
 	    {
 	      heter(dataArray,&dh,dpar,'i');
-	      /*
-	      printf("dataArray[0]: %d dataArray[dpar.noLoci*dpar.totNoInd*2]: %d",
-		     dataArray[0],dataArray[dpar.noLoci*dpar.totNoInd*2]);
-	      for(int i=0; i<dpar.totNoInd; i++)
-		for(int j=0; j<dpar.noLoci; j++)
-		  {
-		    printf("Indiv %d, locus %d, allele1: %d, allele2: %d\n",
-			   i,j,dataArray[MTOA(i,j,0,n1,n2)],
-			   dataArray[MTOA(i,j,1,n1,n2)]);
-		    
-			   }*/
-	      for(int i = 0; i < dpar.noPops; i++)
-	      {
-
-		// printf("PopID: %s\t",popNames[i]);
-		// printf("PopIndex: %d\n",keyToIndex(popKeys, popNames[i]));
-		// printf("NoInd: %d\t NoLoci: %d\n",noInd[i],noLoci);
-
-	      }
+	    }
+	  if(opt_help)
+	    {
+	      print_help();
 	    }
 	}
     }

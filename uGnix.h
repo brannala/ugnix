@@ -63,6 +63,8 @@ typedef struct data_hash
 
 struct indiv* readGFile(FILE* inputFile);
 
+struct indiv* readGstdin(); 
+
 void fillheader(const char version[]);
 
 void show_header();
