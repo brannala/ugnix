@@ -18,15 +18,46 @@
 
 #include "uGnix.h"
 
+
+
+
+
+
 /* options */
 int opt_print_ind = 0; /* print labels of individuals */
 int opt_print_no_pop = 0; /* print number of populations */
 int opt_print_loci = 0; /* print details for each locus */
 int opt_print_default = 0; /* print default summary (population names, noInd, noLoci) */
+int opt_print_help = 0; /* print help information */
 
 FILE* inputFile;
 char fileName[100];
 char version[] = "gsum";
+
+static void cmd_help()
+{
+  /*       0         1         2         3         4         5         6         7          */
+  /*       01234567890123456789012345678901234567890123456789012345678901234567890123456789 */
+
+  fprintf(stderr,
+          "Usage: %s [OPTIONS]... FILE \n"
+	  "List information about the FILE (basic summary of data by default).", version);
+  fprintf(stderr,
+          "\n"
+          "General options:\n"
+          "  -h                 display help information\n"
+          "  -v                 display version information\n"
+          "  -i                 summarize individuals\n"
+          "  -p                 summarize populations\n"
+          "  -l                 summarize loci\n"
+	  "Notice: FILE must be in BA3/Immanc format.\n"
+          "\n"
+         );
+
+  /*       0         1         2         3         4         5         6         7          */
+  /*       01234567890123456789012345678901234567890123456789012345678901234567890123456789 */
+}
+
 
 int main(int argc, char **argv)
 {
@@ -43,7 +74,7 @@ int main(int argc, char **argv)
   
   opterr = 0;
   int c;
-  while((c = getopt(argc, argv, "lpi")) != -1)
+  while((c = getopt(argc, argv, "lpih")) != -1)
     switch(c)
       {
       case 'i':
@@ -54,6 +85,9 @@ int main(int argc, char **argv)
 	break;
       case 'l':
 	opt_print_loci = 1;
+	break;
+      case 'h':
+	opt_print_help = 1;
 	break;
       case '?':
         if (isprint (optopt))
@@ -69,7 +103,7 @@ int main(int argc, char **argv)
   if(optind < argc)
     strcpy(fileName,argv[optind]);
   else
-    { printf("Missing filename argument!\n"); return 1; }
+    { cmd_help(); return 1; }
   inputFile = fopen(fileName,"r");
   if( inputFile == NULL )
     printf("%s: stat of %s failed: no such file\n",argv[0],fileName);
@@ -90,7 +124,12 @@ int main(int argc, char **argv)
 		  printf("no_ind: %d\t no_loci: %d\n",dpar.noInd[i],dpar.noLoci);
 		}
 	      printf("\n");
-		} 
+		}
+	  if(opt_print_help)
+	      {
+		cmd_help();
+		return 1;
+	      }
 	  if(opt_print_no_pop)
 	    for(int i = 0; i < dpar.noPops; i++)
 	      {
