@@ -19,10 +19,6 @@
 #include "uGnix.h"
 
 
-
-
-
-
 /* options */
 int opt_print_ind = 0; /* print labels of individuals */
 int opt_print_no_pop = 0; /* print number of populations */
@@ -61,6 +57,7 @@ static void cmd_help()
 
 int main(int argc, char **argv)
 {
+  bool inputFromFile=false;
   struct indiv* genoTypes;
   datapar dpar;
   dpar.noPops = 0;
@@ -100,57 +97,74 @@ int main(int argc, char **argv)
       }
   
   if(optind == 1) opt_print_default=1;
-  if(optind < argc)
+  if(optind < argc)  /* additional arguments present: filename? */
+    {
     strcpy(fileName,argv[optind]);
-  else
-    { cmd_help(); return 1; }
-  inputFile = fopen(fileName,"r");
-  if( inputFile == NULL )
-    printf("%s: stat of %s failed: no such file\n",argv[0],fileName);
+    inputFile = fopen(fileName,"r");
+    inputFromFile=true;
+    if( inputFile == NULL )
+      {
+	printf("%s: stat of %s failed: no such file\n",argv[0],fileName);
+	return 1;
+      }
+    }
   else
     {
-      genoTypes = readGFile(inputFile);
-      if(genoTypes == NULL)
+      if(isatty(STDIN_FILENO))  /* is input from a tty rather than a redirect or pipe? */
+	{                       /* if from tty exit with help msg */
+	  cmd_help();
 	  return 1;
-      else
-	{
-	  getDataParams(genoTypes,&dh,&dpar);
-	  if(opt_print_default)
-	    {
-	      printf("no_pop: %d\t tot_no_ind: %d\n\n",dpar.noPops,dpar.totNoInd);
-	      for(int i = 0; i < dpar.noPops; i++)
-		{
-		  printf("PopID: %s\t",dpar.popNames[i]);
-		  printf("no_ind: %d\t no_loci: %d\n",dpar.noInd[i],dpar.noLoci);
-		}
-	      printf("\n");
-		}
-	  if(opt_print_help)
-	      {
-		cmd_help();
-		return 1;
-	      }
-	  if(opt_print_no_pop)
-	    for(int i = 0; i < dpar.noPops; i++)
-	      {
-		printf("PopID: %s\n",dpar.popNames[i]);
-	      }
-	  if(opt_print_ind)
-	    for(int i = 0; i < dpar.noPops; i++)
-	      {
-		printf("PopID: %s\n",dpar.popNames[i]);
-		printKeys(dh.indKeys[i],"IndID: %s (%d)\n");
-	      } 
-	  if(opt_print_loci)
-	    {
-	      for(int i=0; i<dpar.noLoci; i++)
-		printf("LocID: %s\t no_alleles: %d\t missing: %s\n",dpar.locusNames[i],
-		       dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][0]-1,
-		       dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][1] ? "Y" : "N");
-	    } 
 	}
-      fclose(inputFile);
     }
+  if(inputFromFile)
+    genoTypes = readGFile(inputFile);
+  else
+    genoTypes = readGFile(NULL);
+  if(genoTypes == NULL)
+	  return 1;
+  else
+    {
+      getDataParams(genoTypes,&dh,&dpar);
+      if(opt_print_default)
+	{
+	  printf("no_pop: %d\t tot_no_ind: %d\n\n",dpar.noPops,dpar.totNoInd);
+	  for(int i = 0; i < dpar.noPops; i++)
+	    {
+	      printf("PopID: %s\t",dpar.popNames[i]);
+	      printf("no_ind: %d\t no_loci: %d\n",dpar.noInd[i],dpar.noLoci);
+	    }
+	  printf("\n");
+	}
+      if(opt_print_help)
+	{
+	  cmd_help();
+	  return 1;
+	}
+      if(opt_print_no_pop)
+	for(int i = 0; i < dpar.noPops; i++)
+	  {
+	    printf("PopID: %s\n",dpar.popNames[i]);
+	  }
+      if(opt_print_ind)
+	for(int i = 0; i < dpar.noPops; i++)
+	  {
+	    char formattedString[50];
+	    strcpy(formattedString,"PopID: ");
+	    strcat(formattedString,dpar.popNames[i]);
+	    strcat(formattedString,"\tIndID: %s \n");
+	    printKeys(dh.indKeys[i],formattedString);
+	  } 
+      if(opt_print_loci)
+	{
+	  for(int i=0; i<dpar.noLoci; i++)
+	    printf("LocID: %s\t no_alleles: %d\t missing: %s\n",dpar.locusNames[i],
+		   dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][0]-1,
+		   dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][1] ? "Y" : "N");
+	} 
+    }
+  if(inputFromFile)
+    fclose(inputFile);
 }
+
 
 

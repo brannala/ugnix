@@ -35,43 +35,30 @@ struct indiv* readGFile(FILE* inputFile)
   head = malloc(sizeof(struct indiv));
   head->next = NULL;
   current = head;
-  while((fgets(oneLine,sizeof(oneLine),inputFile)) != NULL)
-    {
-      new = malloc(sizeof(struct indiv));
-      new->next = NULL;
-      current->next = new;
-      current = new;
-      nvars = sscanf(oneLine,"%s %s %s %s %s",current->indLabel,current->popLabel,
-		     current->locusLabel,current->allele1,current->allele2);
-      if(nvars != 5) { printf("Error: incorrect number of entries at: %s",oneLine); return(NULL); }
-    }
+  if(inputFile!=NULL)    /* reading from input file */
+    while((fgets(oneLine,sizeof(oneLine),inputFile)) != NULL)
+      {
+	new = malloc(sizeof(struct indiv));
+	new->next = NULL;
+	current->next = new;
+	current = new;
+	nvars = sscanf(oneLine,"%s %s %s %s %s",current->indLabel,current->popLabel,
+		       current->locusLabel,current->allele1,current->allele2);
+	if(nvars != 5) { printf("Error: incorrect number of entries at: %s",oneLine); return(NULL); }
+      }
+  else    /* reading from pipe or redirected file */
+    while((fgets(oneLine,sizeof(oneLine),stdin)) != NULL)
+      {
+	new = malloc(sizeof(struct indiv));
+	new->next = NULL;
+	current->next = new;
+	current = new;
+	nvars = sscanf(oneLine,"%s %s %s %s %s",current->indLabel,current->popLabel,
+		       current->locusLabel,current->allele1,current->allele2);
+	if(nvars != 5) { printf("Error: incorrect number of entries at: %s",oneLine); return(NULL); }
+      }
   return(head);
 }
-
-struct indiv* readGstdin() 
-{
-  int nvars;
-  struct indiv* head;
-  struct indiv* current;
-  struct indiv* new;
-  head = NULL;
-  char oneLine[MAXLN];
-  head = malloc(sizeof(struct indiv));
-  head->next = NULL;
-  current = head;
-  while((gets(oneLine)) != NULL)
-    {
-      new = malloc(sizeof(struct indiv));
-      new->next = NULL;
-      current->next = new;
-      current = new;
-      nvars = sscanf(oneLine,"%s %s %s %s %s",current->indLabel,current->popLabel,
-		     current->locusLabel,current->allele1,current->allele2);
-      if(nvars != 5) { printf("Error: incorrect number of entries at: %s",oneLine); return(NULL); }
-    }
-  return(head);
-}
-
 
 void fillData(struct indiv* genoTypes, int* dataArray, dhash* dh, datapar dpar)
 {

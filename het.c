@@ -45,7 +45,7 @@ static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
 {
   int n1 = dpar.totNoInd*dpar.noLoci;
   int n2 = dpar.totNoInd;
-  if(type == 'i')
+  if(type == 'i')  /* print avg heter across loci for each individual */
     {
       gchar** indList[MAXPOP];
       for(int i=0; i<dpar.noPops; i++)
@@ -88,6 +88,7 @@ static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
 
 int main(int argc, char **argv)
 {
+  bool inputFromFile=false;
   struct indiv* genoTypes;
   datapar dpar;
   dpar.noPops = 0;
@@ -102,7 +103,7 @@ int main(int argc, char **argv)
   
   opterr = 0;
   int c;
-  while((c = getopt(argc, argv, "lih")) != -1)
+  while((c = getopt(argc, argv, "alih")) != -1)
     switch(c)
       {
       case 'i':
@@ -125,31 +126,51 @@ int main(int argc, char **argv)
       }
   
   if(optind == 1) opt_default=1;
-  if(optind < argc)
+  if(optind < argc) /* additional arguments present: filename? */
+    {
     strcpy(fileName,argv[optind]);
-  else
-    { if(opt_help) print_help(); else print_msg(); return 1; }
-  inputFile = fopen(fileName,"r");
-  if( inputFile == NULL )
-    printf("%s: stat of %s failed: no such file\n",argv[0],fileName);
+    inputFile = fopen(fileName,"r");
+    inputFromFile=true;
+    if( inputFile == NULL )
+      {
+	printf("%s: stat of %s failed: no such file\n",argv[0],fileName);
+	return 1;
+      }
+    }
   else
     {
-      genoTypes = readGFile(inputFile);
-      if(genoTypes == NULL)
-	  return 1;
-      else
-	{
-	  getDataParams(genoTypes,&dh,&dpar);
-	  dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
-	  fillData(genoTypes,dataArray,&dh,dpar);
-	  if(opt_heter_ind)
-	    {
-	      heter(dataArray,&dh,dpar,'i');
-	    }
+      if(isatty(STDIN_FILENO))  /* is input from a tty rather than a redirect or pipe? */
+	{                       /* if from tty exit with help msg */
 	  if(opt_help)
-	    {
-	      print_help();
-	    }
+	    print_help();
+	  else
+	    print_msg();
+	  return 1;
+	}
+    }
+  if(inputFromFile)
+    genoTypes = readGFile(inputFile);
+  else
+    genoTypes = readGFile(NULL);
+  if(genoTypes == NULL)
+    return 1;
+  else
+    {
+      getDataParams(genoTypes,&dh,&dpar);
+      dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
+      fillData(genoTypes,dataArray,&dh,dpar);
+      if(opt_heter_ind)
+	{
+	  heter(dataArray,&dh,dpar,'i');
+	}
+      if(opt_heter_loci)
+	{
+	  heter(dataArray,&dh,dpar,'l');
+	}
+      if(opt_help)
+	{
+	  print_help();
 	}
     }
 }
+

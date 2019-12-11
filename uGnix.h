@@ -6,6 +6,7 @@
 #include <gmodule.h>
 #include <math.h>
 #include <unistd.h>
+#include<stdbool.h>
 
 #define MAXLN 1000 
 #define MAXIND 10000
@@ -62,8 +63,6 @@ typedef struct data_hash
 } dhash;
 
 struct indiv* readGFile(FILE* inputFile);
-
-struct indiv* readGstdin(); 
 
 void fillheader(const char version[]);
 
