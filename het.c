@@ -89,7 +89,6 @@ static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
 int main(int argc, char **argv)
 {
   bool inputFromFile=false;
-  struct indiv* genoTypes;
   datapar dpar;
   dpar.noPops = 0;
   dpar.totNoInd = 0;
@@ -149,28 +148,21 @@ int main(int argc, char **argv)
 	}
     }
   if(inputFromFile)
-    genoTypes = readGFile(inputFile);
-  else
-    genoTypes = readGFile(NULL);
-  if(genoTypes == NULL)
-    return 1;
-  else
+    readGData(inputFile,&dh,&dpar);
+  dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
+  if(inputFromFile)
+    fillData(inputFile,dataArray,&dh,&dpar);
+  if(opt_heter_ind)
     {
-      getDataParams(genoTypes,&dh,&dpar);
-      dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
-      fillData(genoTypes,dataArray,&dh,dpar);
-      if(opt_heter_ind)
-	{
-	  heter(dataArray,&dh,dpar,'i');
-	}
-      if(opt_heter_loci)
-	{
-	  heter(dataArray,&dh,dpar,'l');
-	}
-      if(opt_help)
-	{
-	  print_help();
-	}
+      heter(dataArray,&dh,dpar,'i');
+    }
+  if(opt_heter_loci)
+    {
+      heter(dataArray,&dh,dpar,'l');
+    }
+  if(opt_help)
+    {
+      print_help();
     }
 }
 

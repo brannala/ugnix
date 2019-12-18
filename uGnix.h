@@ -6,9 +6,10 @@
 #include <gmodule.h>
 #include <math.h>
 #include <unistd.h>
-#include<stdbool.h>
+#include <stdbool.h>
 
-#define MAXLN 1000 
+#define MAXLN 50
+#define MAXALLNM 20
 #define MAXIND 10000
 #define MAXPOP 500
 #define MAXLOCI 100000
@@ -32,16 +33,15 @@
 
 #define MTOA(I,L,A,N1,N2) ((N1)*(A))+((N2)*(L))+(I) 
 
-
 struct indiv
 {
   char indLabel[MAXLN];
   char popLabel[MAXLN];
   char locusLabel[MAXLN];
-  char allele1[MAXLN];
-  char allele2[MAXLN];
-  struct indiv* next;
+  char allele1[MAXALLNM];
+  char allele2[MAXALLNM];
 };
+
 
 typedef struct data_params
 {
@@ -62,13 +62,13 @@ typedef struct data_hash
   GHashTable* alleleKeys[MAXLOCI];
 } dhash;
 
-struct indiv* readGFile(FILE* inputFile);
+void get_line(FILE* inputFile, struct indiv* ind);
 
 void fillheader(const char version[]);
 
 void show_header();
 
-void fillData(struct indiv* genoTypes, int* dataArray, dhash* dh, datapar dpar);
+void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar);
 
 void iterator(gpointer key, gpointer value, gpointer user_data);
 
@@ -80,14 +80,6 @@ int keyToIndex(GHashTable* hash, char* mykey);
 
 void printKeys(GHashTable* hash, char* phrase);
 
-void getPopNames( struct indiv* genoTypes, dhash* dh, datapar* dpar);
-
-void getIndNames( struct indiv* genoTypes, dhash* dh, datapar* dpar);
-
-void getLociNames( struct indiv* genoTypes, dhash* dh, datapar* dpar);
-
-void getAlleleNames( struct indiv* genoTypes, dhash* dh, datapar* dpar);
-
-void getDataParams(struct indiv* genoTypes, dhash* dh, datapar* dpar);
+void readGData(FILE *inputFile, dhash* dh, datapar* dpar);
 
 int isMissing(char* x);
