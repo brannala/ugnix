@@ -22,6 +22,36 @@ void show_header()
   fprintf(stdout,"\n");
 }
 
+/* print memory usage to stderr in sensible units */
+void prMemSz(unsigned int x)
+{
+  double convFact=1.0;
+  char memUnit[4];
+  if(x/1000000000)
+    {
+      convFact=1000000000.0;
+      strcpy(memUnit,"GB");
+    }
+  else
+    if(x/1000000)
+    {
+      convFact=1000000.0;
+      strcpy(memUnit,"MB");
+    }
+    else
+      if(x/1000)
+	{
+	  convFact=1000.0;
+	  strcpy(memUnit,"KB");
+	}
+      else
+	{
+	  convFact=1.0;
+	  strcpy(memUnit,"B");
+	}
+  fprintf(stderr,"Allocated %.0f %s memory for data...\n",x/convFact,memUnit);
+}
+
 /* read one line of input file into struct indiv */
 /* used for parsing by fillData() and readGdata */
 

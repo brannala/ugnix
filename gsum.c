@@ -18,7 +18,6 @@
 
 #include "uGnix.h"
 
-
 /* options */
 int opt_print_ind = 0; /* print labels of individuals */
 int opt_print_no_pop = 0; /* print number of populations */
@@ -57,16 +56,11 @@ static void cmd_help()
 int main(int argc, char **argv)
 {
   bool inputFromFile=false;
-  datapar dpar;
-  dpar.noPops = 0;
-  dpar.totNoInd = 0;
-  dhash dh;
-  dh.popKeys = g_hash_table_new(g_str_hash, g_str_equal);
-  dh.lociKeys = g_hash_table_new(g_str_hash, g_str_equal);
-
+  datapar dpar = {.noPops=0, .totNoInd=0};
+  dhash dh = {.popKeys = g_hash_table_new(g_str_hash, g_str_equal),
+	      .lociKeys = g_hash_table_new(g_str_hash, g_str_equal)}; 
   fillheader(version);
   show_header();
-  
   opterr = 0;
   int c;
   while((c = getopt(argc, argv, "lpih")) != -1)
@@ -93,7 +87,6 @@ int main(int argc, char **argv)
       default:
 	abort();
       }
-  
   if(optind == 1) opt_print_default=1;
   if(optind < argc)  /* additional arguments present: filename? */
     {
@@ -124,7 +117,7 @@ int main(int argc, char **argv)
       for(int i = 0; i < dpar.noPops; i++)
 	{
 	  printf("PopID: %s\t",dpar.popNames[i]);
-	  printf("no_ind: %d\t no_loci: %d\n",dpar.noInd[i],dpar.noLoci);
+	  printf("no_ind: %d\t no_loci: %d\n",dpar.noInd[keyToIndex(dh.popKeys,dpar.popNames[i])],dpar.noLoci);
 	}
       printf("\n");
     }
@@ -141,11 +134,11 @@ int main(int argc, char **argv)
   if(opt_print_ind)
     for(int i = 0; i < dpar.noPops; i++)
       {
-	char formattedString[50];
-	strcpy(formattedString,"PopID: ");
-	strcat(formattedString,dpar.popNames[i]);
-	strcat(formattedString,"\tIndID: %s \n");
-	printKeys(dh.indKeys[i],formattedString);
+	char formatStr[50];
+	strcpy(formatStr,"PopID: ");
+	strcat(formatStr,dpar.popNames[i]);
+	strcat(formatStr,"\tIndID: %s \n");
+	printKeys(dh.indKeys[keyToIndex(dh.popKeys,dpar.popNames[i])],formatStr);
       } 
   if(opt_print_loci)
     {

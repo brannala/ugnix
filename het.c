@@ -149,7 +149,10 @@ int main(int argc, char **argv)
     }
   if(inputFromFile)
     readGData(inputFile,&dh,&dpar);
-  dataArray = malloc((dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int));
+  unsigned int datasize = (dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int); 
+  
+  dataArray = malloc(datasize);
+  prMemSz(datasize);
   if(inputFromFile)
     fillData(inputFile,dataArray,&dh,&dpar);
   if(opt_heter_ind)

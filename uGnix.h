@@ -22,7 +22,7 @@
 #define PLL_C2S(x) PLL_STRING(x)
 
 #define VERSION_MAJOR 0
-#define VERSION_MINOR 1
+#define VERSION_MINOR 2
 #define VERSION_PATCH 1
 
 #define PROG_VERSION "v" PLL_C2S(VERSION_MAJOR) "." PLL_C2S(VERSION_MINOR) "." \
@@ -61,6 +61,8 @@ typedef struct data_hash
   GHashTable* lociKeys;
   GHashTable* alleleKeys[MAXLOCI];
 } dhash;
+
+void prMemSz(unsigned int x);
 
 void get_line(FILE* inputFile, struct indiv* ind);
 
