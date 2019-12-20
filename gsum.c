@@ -15,8 +15,10 @@
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
+#ifndef STDLIBS
+#define STDLIBS
 #include "uGnix.h"
+#endif
 
 /* options */
 int opt_print_ind = 0;     /* print labels of individuals */
@@ -27,7 +29,7 @@ int opt_print_help = 0;    /* print help information */
 
 FILE* inputFile;
 char fileName[100];
-char prog_name[] = "gsum";
+char version[] = "gsum";
 
 static void cmd_help()
 {
@@ -36,7 +38,7 @@ static void cmd_help()
 
   fprintf(stderr,
           "Usage: %s [OPTIONS]... FILE \n"
-	  "List information about the FILE (basic summary of data by default).", prog_name);
+	  "List information about the FILE (basic summary of data by default).", version);
   fprintf(stderr,
           "\n"
           "General options:\n"
@@ -53,13 +55,31 @@ static void cmd_help()
   /*       01234567890123456789012345678901234567890123456789012345678901234567890123456789 */
 }
 
+/* prints formatted alleleIDs in alphabetical order */
+
+static void printSortedAlleles(GHashTable* hash,char* phrase)
+{
+  unsigned int len;
+  char** keyArray = (gchar **) g_hash_table_get_keys_as_array(hash,&len);
+  char oneline[MAXALL*MAXALLNM];
+  strcpy(oneline,phrase);
+  qsort(keyArray,len,sizeof(char *),cstring_cmp);
+  for(unsigned int i=0; i<len; i++)
+    {
+      strcat(oneline," ");
+      strcat(oneline,keyArray[i]);
+    }
+  printf("%s",oneline);
+  g_free(keyArray);
+}
+
 int main(int argc, char **argv)
 {
   bool inputFromFile=false;
   datapar dpar = {.noPops=0, .totNoInd=0};
   dhash dh = {.popKeys = g_hash_table_new(g_str_hash, g_str_equal),
 	      .lociKeys = g_hash_table_new(g_str_hash, g_str_equal)}; 
-  fillheader(prog_name);
+  fillheader(version);
   show_header();
   opterr = 0;
   int c;
@@ -95,7 +115,7 @@ int main(int argc, char **argv)
     inputFromFile=true;
     if( inputFile == NULL )
       {
-	printf("%s: stat of %s failed: no such file\n",prog_name,fileName);
+	printf("%s: stat of %s failed: no such file\n",version,fileName);
 	exit(1);
       }
     }
@@ -134,11 +154,13 @@ int main(int argc, char **argv)
   if(opt_print_ind)
     for(int i = 0; i < dpar.noPops; i++)
       {
+	int popIndx = keyToIndex(dh.popKeys,dpar.popNames[i]);
 	char formatStr[50];
 	strcpy(formatStr,"PopID: ");
 	strcat(formatStr,dpar.popNames[i]);
 	strcat(formatStr,"\tIndID: ");
-	printSortedIndivs(dh.indKeys[keyToIndex(dh.popKeys,dpar.popNames[i])],formatStr);
+	for(int i=0; i<dpar.noInd[popIndx]; i++)
+	  printf("%s %s\n",formatStr,dpar.indNames[popIndx][i]);
       } 
   if(opt_print_loci)
     {
@@ -150,9 +172,7 @@ int main(int argc, char **argv)
 	  int currNoAlleles = dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][0]-1;
 	  if( currNoAlleles > 0)
 	    {
-	      //	      printf("\t alleles: ");
 	      printSortedAlleles(dh.alleleKeys[keyToIndex(dh.lociKeys,dpar.locusNames[i])],"\t alleles: ");
-		//	      printKeys(dh.alleleKeys[keyToIndex(dh.lociKeys,dpar.locusNames[i])]," %s");
 	      printf("\n");
 	    }
 	  else

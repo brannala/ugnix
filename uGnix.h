@@ -8,8 +8,9 @@
 #include <unistd.h>
 #include <stdbool.h>
 
-#define MAXLN 50
-#define MAXALLNM 20
+#define MAXLN 100
+#define MAXALLNM 50
+#define MAXALL 500
 #define MAXIND 10000
 #define MAXPOP 500
 #define MAXLOCI 100000
@@ -31,7 +32,7 @@
 
 #define MTOA(I,L,A,N1,N2) ((N1)*(A))+((N2)*(L))+(I) 
 
-extern char prog_name[]; /* global variable: name of program using library -- for use with stderr */
+extern char version[];  /* global variable: name of program using library -- for use with stderr */
 
 struct indiv
 {
@@ -42,16 +43,16 @@ struct indiv
   char allele2[MAXALLNM];
 };
 
-
 typedef struct data_params
 {
   unsigned int noPops;
   unsigned int noLoci;
   int noAlleles[MAXLOCI][2];
-  int noInd[MAXPOP];
+  unsigned int noInd[MAXPOP];
   int totNoInd;
   char** popNames;
   char** locusNames;
+  char** indNames[MAXPOP];
 } datapar;
 
 typedef struct data_hash
@@ -62,30 +63,24 @@ typedef struct data_hash
   GHashTable* alleleKeys[MAXLOCI];
 } dhash;
 
-int cstring_cmp(const void *a, const void *b);
-
-void prMemSz(unsigned int x);
-
-void get_line(FILE* inputFile, struct indiv* ind);
-
-void fillheader(const char version[]);
-
-void show_header();
-
-void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar);
-
-// void iterator(gpointer key, gpointer value, gpointer user_data);
-
 gboolean addKey(GHashTable* hash, char* mykey, int index);
 
 int noKeys(GHashTable* hash);
 
 int keyToIndex(GHashTable* hash, char* mykey);
 
-void printSortedIndivs(GHashTable* hash,char* phrase);
+void fillheader(const char version[]);
 
-void printSortedAlleles(GHashTable* hash,char* phrase);
+void show_header();
 
-void readGData(FILE *inputFile, dhash* dh, datapar* dpar);
+int cstring_cmp(const void *a, const void *b);
+
+void prMemSz(unsigned int x);
 
 int isMissing(char* x);
+
+void get_line(FILE* inputFile, struct indiv* ind);
+
+void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar);
+
+void readGData(FILE *inputFile, dhash* dh, datapar* dpar);

@@ -15,8 +15,10 @@
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
+#ifndef STDLIBS
+#define STDLIBS
 #include "uGnix.h"
+#endif
 
 /* options */
 int opt_heter_ind = 0; /* print average heterozygosity for each individual */
@@ -26,7 +28,7 @@ int opt_default = 0; /* print help message */
 
 FILE* inputFile;
 char fileName[100];
-char prog_name[] = "het";
+char version[] = "het";
 
 static void print_msg()
 {
@@ -40,30 +42,26 @@ static void print_help()
 	 "-l print average heterozygosity for each locus\n");
 }
 
-static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
+static void heter(int* dataArray, dhash* dh, datapar dpar, char het_across)
 {
   int n1 = dpar.totNoInd*dpar.noLoci;
   int n2 = dpar.totNoInd;
-  if(type == 'i')  /* print avg heter across loci for each individual */
+  if(het_across == 'i')  /* print avg heter across loci for each individual */
     {
-      gchar** indList[MAXPOP];
       for(int i=0; i<dpar.noPops; i++)
 	{
-	  unsigned int nInds;
-	  indList[keyToIndex(dh->popKeys,dpar.popNames[i])] =
-	    (gchar **) g_hash_table_get_keys_as_array(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],&nInds);
-	  for(int j=0; j<nInds; j++)
+	  int popIndx = keyToIndex(dh->popKeys,dpar.popNames[i]); 
+	  for(int j=0; j<dpar.noInd[popIndx]; j++)
 	    {
-	      int indIndex = keyToIndex(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],
-					indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j]);
+	      int indIndx = keyToIndex(dh->indKeys[popIndx],dpar.indNames[popIndx][j]);
 	      int total_genotypes = 0;
 	      int total_hets = 0;
 	      double h1 = 0;
 	      double sd_h1 = 0;
 	      for(int k=0; k<dpar.noLoci; k++)
 		{
-		  int a1 = dataArray[MTOA(indIndex,k,0,n1,n2)];
-		  int a2 = dataArray[MTOA(indIndex,k,1,n1,n2)];
+		  int a1 = dataArray[MTOA(indIndx,k,0,n1,n2)];
+		  int a2 = dataArray[MTOA(indIndx,k,1,n1,n2)];
 		  if((a1!=0)&&(a2!=0))
 		    {
 		      total_genotypes++;
@@ -75,31 +73,30 @@ static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
 		}
 	      if(total_genotypes>0)
 		printf("PopID: %s\tIndID: %s\tH1: %.3f +/- %.3f\n",dpar.popNames[i],
-		     indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],h1,(sd_h1*1.96));
+		     dpar.indNames[popIndx][j],h1,(sd_h1*1.96));
 	      else
 		printf("PopID: %s\tIndID: %s\tH1: %s +/- %s\n",dpar.popNames[i],
-		       indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],"M","M");
+		       dpar.indNames[popIndx][j],"M","M");
 	    }
 	}
     }
-  else if(type == 'l')  /* print avg heter across indivs for each locus in each population */
+  else if(het_across == 'l')  /* print avg heter across indivs for each locus in each population */
     {
       for(int i=0; i<dpar.noPops; i++)
 	{
-	  unsigned int nInds;
-	  gchar** indList = (gchar **) g_hash_table_get_keys_as_array(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],&nInds);
+	  int popIndx = keyToIndex(dh->popKeys,dpar.popNames[i]);
 	  for(int j=0; j<dpar.noLoci; j++)
 	    {
-	      int indexLoc = keyToIndex(dh->lociKeys,dpar.locusNames[j]);
+	      int locIndx = keyToIndex(dh->lociKeys,dpar.locusNames[j]);
 	      int total_genotypes = 0;
 	      int total_hets = 0;
 	      double h1 = 0;
 	      double sd_h1 = 0;
-	      for(int k=0; k<nInds; k++)
+	      for(int k=0; k<dpar.noInd[popIndx]; k++)
 		{
-		  int indexInd = keyToIndex(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],indList[k]); 
-		  int a1 = dataArray[MTOA(indexInd,indexLoc,0,n1,n2)];
-		  int a2 = dataArray[MTOA(indexInd,indexLoc,1,n1,n2)];
+		  int indIndx = keyToIndex(dh->indKeys[popIndx],dpar.indNames[popIndx][k]); 
+		  int a1 = dataArray[MTOA(indIndx,locIndx,0,n1,n2)];
+		  int a2 = dataArray[MTOA(indIndx,locIndx,1,n1,n2)];
 		  if((a1!=0)&&(a2!=0))
 		    {
 		      total_genotypes++;
@@ -127,7 +124,7 @@ int main(int argc, char **argv)
   dhash dh = {.popKeys = g_hash_table_new(g_str_hash, g_str_equal),
 	      .lociKeys = g_hash_table_new(g_str_hash, g_str_equal)}; 
   int* dataArray;
-  fillheader(prog_name);
+  fillheader(version);
   show_header();
   opterr = 0;
   int c;
@@ -177,13 +174,13 @@ int main(int argc, char **argv)
     }
   if(inputFromFile)
     readGData(inputFile,&dh,&dpar);
-  unsigned int datasize = (dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int); 
-  if((dataArray = malloc(datasize))==NULL)
+  unsigned int datasize = (dpar.noLoci*dpar.totNoInd*2+1); 
+  if((dataArray = calloc(datasize,sizeof(int)))==NULL)
     {
-      fprintf(stderr,"%s: out of memory! exiting gracefully...\n",prog_name);
+      fprintf(stderr,"%s: out of memory! exiting gracefully...\n",version);
       exit(1);
     }
-  prMemSz(datasize);
+  prMemSz(datasize*sizeof(int));
   fillData(inputFile,dataArray,&dh,&dpar);
   if(opt_heter_ind)
     {
