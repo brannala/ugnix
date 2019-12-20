@@ -16,8 +16,6 @@
 
 /* constants */
 
-#define PROG_NAME "uGnix"
-
 #define PLL_STRING(x) #x
 #define PLL_C2S(x) PLL_STRING(x)
 
@@ -32,6 +30,8 @@
 /* N1=totNoInd*noLoci N2=totNoInd I=ind L=locus A=allele */
 
 #define MTOA(I,L,A,N1,N2) ((N1)*(A))+((N2)*(L))+(I) 
+
+extern char prog_name[]; /* global variable: name of program using library -- for use with stderr */
 
 struct indiv
 {
@@ -62,6 +62,8 @@ typedef struct data_hash
   GHashTable* alleleKeys[MAXLOCI];
 } dhash;
 
+int cstring_cmp(const void *a, const void *b);
+
 void prMemSz(unsigned int x);
 
 void get_line(FILE* inputFile, struct indiv* ind);
@@ -72,7 +74,7 @@ void show_header();
 
 void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar);
 
-void iterator(gpointer key, gpointer value, gpointer user_data);
+// void iterator(gpointer key, gpointer value, gpointer user_data);
 
 gboolean addKey(GHashTable* hash, char* mykey, int index);
 
@@ -80,7 +82,9 @@ int noKeys(GHashTable* hash);
 
 int keyToIndex(GHashTable* hash, char* mykey);
 
-void printKeys(GHashTable* hash, char* phrase);
+void printSortedIndivs(GHashTable* hash,char* phrase);
+
+void printSortedAlleles(GHashTable* hash,char* phrase);
 
 void readGData(FILE *inputFile, dhash* dh, datapar* dpar);
 

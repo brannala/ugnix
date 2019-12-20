@@ -12,7 +12,7 @@ void fillheader(const char version[])
 {
   snprintf(progheader, 80,
            "%s %s %s",
-           PROG_NAME, PROG_VERSION, version);
+           prog_name, PROG_VERSION, version);
 }
 
 void show_header()
@@ -23,6 +23,7 @@ void show_header()
 }
 
 /* print memory usage to stderr in sensible units */
+
 void prMemSz(unsigned int x)
 {
   double convFact=1.0;
@@ -52,6 +53,17 @@ void prMemSz(unsigned int x)
   fprintf(stderr,"Allocated %.0f %s memory for data...\n",x/convFact,memUnit);
 }
 
+/* string cmp function for use by qsort */
+
+int cstring_cmp(const void *a, const void *b) 
+{ 
+    const char **ia = (const char **)a;
+    const char **ib = (const char **)b;
+    return strcmp(*ia, *ib);
+	/* strcmp functions works exactly as expected from
+	comparison function */ 
+}
+
 /* read one line of input file into struct indiv */
 /* used for parsing by fillData() and readGdata */
 
@@ -66,8 +78,8 @@ void get_line(FILE* inputFile, struct indiv* ind)
 		     ind->locusLabel,ind->allele1,ind->allele2);
       if(nvars != 5)
 	{
-	  fprintf(stderr,"\nError: At line %ld, %d != 5 is an incorrect number of entries at: %s\n",
-		  lineNo,nvars,strtok(oneLine,"\n"));
+	  fprintf(stderr,"\n %s: error at line %ld, %d != 5 is an incorrect number of entries at: %s\n",
+		  prog_name,lineNo,nvars,strtok(oneLine,"\n"));
 	  exit(1);
 	}
       ++lineNo;
@@ -81,7 +93,11 @@ void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar)
   int n1 = dpar->totNoInd*dpar->noLoci;
   int n2 = dpar->totNoInd;
   struct indiv* genos;
-  genos = malloc(sizeof(struct indiv));
+  if((genos = malloc(sizeof(struct indiv)))==NULL)
+    {
+      fprintf(stderr,"%s: out of memory! exiting gracefully...\n",prog_name);
+      exit(1);
+    };
   fprintf(stderr,"Generating data structures...\n\n");
   rewind(inputFile);
   get_line(inputFile,genos);
@@ -96,15 +112,6 @@ void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar)
       get_line(inputFile,genos);
     }
 }
-
-/* used by printKeys to iterate all keys and values in hash */
-
-void iterator(gpointer key, gpointer value, gpointer user_data)
-{
-  printf(user_data, key, GPOINTER_TO_INT(value));
-}
-
-/* try to add key and value. return FALSE if key already exists */
 
 gboolean addKey(GHashTable* hash, char* mykey, int index)
 {
@@ -129,14 +136,43 @@ int keyToIndex(GHashTable* hash, char* mykey)
   return GPOINTER_TO_INT(g_hash_table_lookup(hash, mykey));
 }
 
-/* print all key value pairs in hash */
+/* prints formatted indivIDs in alphabetical order */
 
-void printKeys(GHashTable* hash,char* phrase)
+void printSortedIndivs(GHashTable* hash,char* phrase)
 {
-  g_hash_table_foreach(hash, (GHFunc)iterator, phrase);
+  unsigned int len;
+  char** keyArray = (gchar **) g_hash_table_get_keys_as_array(hash,&len);
+  qsort(keyArray,len,sizeof(char *),cstring_cmp);
+  for(unsigned int i=0; i<len; i++)
+    {
+      char oneline[1000]="";
+      strcat(oneline,phrase);
+      strcat(oneline," ");
+      strcat(oneline,keyArray[i]);
+      strcat(oneline,"\n");
+      printf("%s",oneline);
+    }
+  g_free(keyArray);
 }
 
-/* returns 1 (true) if missing data exist and o (false) otherwise */
+/* prints formatted alleleIDs in alphabetical order */
+
+void printSortedAlleles(GHashTable* hash,char* phrase)
+{
+  unsigned int len;
+  char** keyArray = (gchar **) g_hash_table_get_keys_as_array(hash,&len);
+  char* oneline = strdup(phrase);
+  qsort(keyArray,len,sizeof(char *),cstring_cmp);
+  for(unsigned int i=0; i<len; i++)
+    {
+      strcat(oneline," ");
+      strcat(oneline,keyArray[i]);
+    }
+  printf("%s",oneline);
+  g_free(keyArray);
+}
+
+/* returns 1 (true) if missing data exist and 0 (false) otherwise */
 
 int isMissing(char* x)
 {
@@ -161,7 +197,11 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
   int currNoPops=0;
   int currNoLoci=0;
   struct indiv* genos;
-  genos = malloc(sizeof(struct indiv));
+  if((genos = malloc(sizeof(struct indiv)))==NULL)
+    {
+      fprintf(stderr,"%s: out of memory! exiting gracefully...\n",prog_name);
+      exit(1);
+    };
   if(inputFile!=NULL)
     {
       fprintf(stderr,"Getting populations and locus labels...\n");
@@ -183,7 +223,9 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
 	  get_line(inputFile,genos);
 	}
       dpar->locusNames = (gchar **) g_hash_table_get_keys_as_array(dh->lociKeys,&(dpar->noLoci));
+      qsort(dpar->locusNames,dpar->noLoci,sizeof(char *),cstring_cmp);  
       dpar->popNames = (gchar **) g_hash_table_get_keys_as_array(dh->popKeys,&(dpar->noPops));
+      qsort(dpar->popNames,dpar->noPops,sizeof(char *),cstring_cmp);  
       fprintf(stderr,"Getting individuals and allele labels...\n\n");
       rewind(inputFile);
       for(int i=0; i<MAXLOCI; i++)
@@ -197,7 +239,6 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
       for(int i=0; i<dpar->noPops; i++) /* get individual labels in each population */
 	  dh->indKeys[i] =
 	    g_hash_table_new(g_str_hash, g_str_equal);
-
       get_line(inputFile,genos);
       while(strcmp(genos->popLabel,"eof"))
 	    {

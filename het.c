@@ -26,7 +26,7 @@ int opt_default = 0; /* print help message */
 
 FILE* inputFile;
 char fileName[100];
-char version[] = "het";
+char prog_name[] = "het";
 
 static void print_msg()
 {
@@ -37,8 +37,7 @@ static void print_help()
 {
   printf("Heterozygosity calculations: \n"
 	 "-i print average heterozygosity for each individual\n"
-	 "-l print average heterozygosity for each locus\n"
-	 "-a print heterozygosity for each individual at each locus\n");
+	 "-l print average heterozygosity for each locus\n");
 }
 
 static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
@@ -78,28 +77,58 @@ static void heter(int* dataArray,dhash* dh,datapar dpar, char type)
 		printf("PopID: %s\tIndID: %s\tH1: %.3f +/- %.3f\n",dpar.popNames[i],
 		     indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],h1,(sd_h1*1.96));
 	      else
-		printf("PopID: %s\tIndID: %s\tH1: %s +/- %s",dpar.popNames[i],
+		printf("PopID: %s\tIndID: %s\tH1: %s +/- %s\n",dpar.popNames[i],
 		       indList[keyToIndex(dh->popKeys,dpar.popNames[i])][j],"M","M");
+	    }
+	}
+    }
+  else if(type == 'l')  /* print avg heter across indivs for each locus in each population */
+    {
+      for(int i=0; i<dpar.noPops; i++)
+	{
+	  unsigned int nInds;
+	  gchar** indList = (gchar **) g_hash_table_get_keys_as_array(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],&nInds);
+	  for(int j=0; j<dpar.noLoci; j++)
+	    {
+	      int indexLoc = keyToIndex(dh->lociKeys,dpar.locusNames[j]);
+	      int total_genotypes = 0;
+	      int total_hets = 0;
+	      double h1 = 0;
+	      double sd_h1 = 0;
+	      for(int k=0; k<nInds; k++)
+		{
+		  int indexInd = keyToIndex(dh->indKeys[keyToIndex(dh->popKeys,dpar.popNames[i])],indList[k]); 
+		  int a1 = dataArray[MTOA(indexInd,indexLoc,0,n1,n2)];
+		  int a2 = dataArray[MTOA(indexInd,indexLoc,1,n1,n2)];
+		  if((a1!=0)&&(a2!=0))
+		    {
+		      total_genotypes++;
+		      if(a1 != a2)
+			total_hets++;
+		    }
+		}
+	      h1 = (total_hets+0.0)/total_genotypes;
+	      sd_h1 = sqrt(h1*(1-h1)/total_genotypes);
+	      if(total_genotypes>0)
+		printf("PopID: %s\tlocID: %s\tH1: %.3f +/- %.3f\n",dpar.popNames[i],
+		     dpar.locusNames[j],h1,(sd_h1*1.96));
+	      else
+		printf("PopID: %s\tlocID: %s\tH1: %s +/- %s\n",dpar.popNames[i],
+		       dpar.locusNames[j],"M","M");
 	    }
 	}
     }
 }
 
-
 int main(int argc, char **argv)
 {
   bool inputFromFile=false;
-  datapar dpar;
-  dpar.noPops = 0;
-  dpar.totNoInd = 0;
-  dhash dh;
-  dh.popKeys = g_hash_table_new(g_str_hash, g_str_equal);
-  dh.lociKeys = g_hash_table_new(g_str_hash, g_str_equal);
+  datapar dpar = {.noPops=0, .totNoInd=0};
+  dhash dh = {.popKeys = g_hash_table_new(g_str_hash, g_str_equal),
+	      .lociKeys = g_hash_table_new(g_str_hash, g_str_equal)}; 
   int* dataArray;
-
-  fillheader(version);
+  fillheader(prog_name);
   show_header();
-  
   opterr = 0;
   int c;
   while((c = getopt(argc, argv, "alih")) != -1)
@@ -108,7 +137,7 @@ int main(int argc, char **argv)
       case 'i':
 	opt_heter_ind = 1;
 	break;
-       case 'l':
+      case 'l':
 	opt_heter_loci = 1;
 	break;
       case 'h':
@@ -123,7 +152,6 @@ int main(int argc, char **argv)
       default:
 	abort();
       }
-  
   if(optind == 1) opt_default=1;
   if(optind < argc) /* additional arguments present: filename? */
     {
@@ -150,11 +178,13 @@ int main(int argc, char **argv)
   if(inputFromFile)
     readGData(inputFile,&dh,&dpar);
   unsigned int datasize = (dpar.noLoci*dpar.totNoInd*2+1) * sizeof(int); 
-  
-  dataArray = malloc(datasize);
+  if((dataArray = malloc(datasize))==NULL)
+    {
+      fprintf(stderr,"%s: out of memory! exiting gracefully...\n",prog_name);
+      exit(1);
+    }
   prMemSz(datasize);
-  if(inputFromFile)
-    fillData(inputFile,dataArray,&dh,&dpar);
+  fillData(inputFile,dataArray,&dh,&dpar);
   if(opt_heter_ind)
     {
       heter(dataArray,&dh,dpar,'i');

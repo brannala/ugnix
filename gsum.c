@@ -19,15 +19,15 @@
 #include "uGnix.h"
 
 /* options */
-int opt_print_ind = 0; /* print labels of individuals */
-int opt_print_no_pop = 0; /* print number of populations */
-int opt_print_loci = 0; /* print details for each locus */
+int opt_print_ind = 0;     /* print labels of individuals */
+int opt_print_no_pop = 0;  /* print number of populations */
+int opt_print_loci = 0;    /* print details for each locus */
 int opt_print_default = 0; /* print default summary (population names, noInd, noLoci) */
-int opt_print_help = 0; /* print help information */
+int opt_print_help = 0;    /* print help information */
 
 FILE* inputFile;
 char fileName[100];
-char version[] = "gsum";
+char prog_name[] = "gsum";
 
 static void cmd_help()
 {
@@ -36,7 +36,7 @@ static void cmd_help()
 
   fprintf(stderr,
           "Usage: %s [OPTIONS]... FILE \n"
-	  "List information about the FILE (basic summary of data by default).", version);
+	  "List information about the FILE (basic summary of data by default).", prog_name);
   fprintf(stderr,
           "\n"
           "General options:\n"
@@ -59,7 +59,7 @@ int main(int argc, char **argv)
   datapar dpar = {.noPops=0, .totNoInd=0};
   dhash dh = {.popKeys = g_hash_table_new(g_str_hash, g_str_equal),
 	      .lociKeys = g_hash_table_new(g_str_hash, g_str_equal)}; 
-  fillheader(version);
+  fillheader(prog_name);
   show_header();
   opterr = 0;
   int c;
@@ -95,8 +95,8 @@ int main(int argc, char **argv)
     inputFromFile=true;
     if( inputFile == NULL )
       {
-	printf("%s: stat of %s failed: no such file\n",argv[0],fileName);
-	return 1;
+	printf("%s: stat of %s failed: no such file\n",prog_name,fileName);
+	exit(1);
       }
     }
   else
@@ -137,8 +137,8 @@ int main(int argc, char **argv)
 	char formatStr[50];
 	strcpy(formatStr,"PopID: ");
 	strcat(formatStr,dpar.popNames[i]);
-	strcat(formatStr,"\tIndID: %s \n");
-	printKeys(dh.indKeys[keyToIndex(dh.popKeys,dpar.popNames[i])],formatStr);
+	strcat(formatStr,"\tIndID: ");
+	printSortedIndivs(dh.indKeys[keyToIndex(dh.popKeys,dpar.popNames[i])],formatStr);
       } 
   if(opt_print_loci)
     {
@@ -150,8 +150,9 @@ int main(int argc, char **argv)
 	  int currNoAlleles = dpar.noAlleles[keyToIndex(dh.lociKeys,dpar.locusNames[i])][0]-1;
 	  if( currNoAlleles > 0)
 	    {
-	      printf("\t alleles: ");
-	      printKeys(dh.alleleKeys[keyToIndex(dh.lociKeys,dpar.locusNames[i])]," %s");
+	      //	      printf("\t alleles: ");
+	      printSortedAlleles(dh.alleleKeys[keyToIndex(dh.lociKeys,dpar.locusNames[i])],"\t alleles: ");
+		//	      printKeys(dh.alleleKeys[keyToIndex(dh.lociKeys,dpar.locusNames[i])]," %s");
 	      printf("\n");
 	    }
 	  else
