@@ -17,7 +17,7 @@
 */
 #ifndef STDLIBS
 #define STDLIBS
-#include "uGnix.h"
+#include<uGnix.h>
 #endif
 
 /* options */

@@ -1,0 +1,11 @@
+uGnix v0.2.1 het
+https://github.com/ugnix
+
+PopID: p0	locID: l0	H1: 0.500 +/- 0.693
+PopID: p0	locID: l1	H1: 0.500 +/- 0.693
+PopID: p0	locID: l2	H1: 0.500 +/- 0.693
+PopID: p0	locID: l3	H1: 0.500 +/- 0.693
+PopID: p1	locID: l0	H1: 0.333 +/- 0.533
+PopID: p1	locID: l1	H1: 0.667 +/- 0.533
+PopID: p1	locID: l2	H1: 0.000 +/- 0.000
+PopID: p1	locID: l3	H1: 0.333 +/- 0.533

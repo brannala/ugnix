@@ -1,0 +1,8 @@
+uGnix v0.2.1 het
+https://github.com/ugnix
+
+PopID: p0	IndID: i0	H1: 1.000 +/- 0.000
+PopID: p0	IndID: i1	H1: 0.000 +/- 0.000
+PopID: p1	IndID: i2	H1: 0.500 +/- 0.490
+PopID: p1	IndID: i3	H1: 0.333 +/- 0.533
+PopID: p1	IndID: i4	H1: 0.250 +/- 0.424
