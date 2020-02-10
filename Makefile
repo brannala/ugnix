@@ -20,8 +20,8 @@ het.o: het.c uGnix.h
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het
-	$(RM) gsum.o uGnix.o het.o
+	$(RM) gsum het test_ugnix
+	$(RM) gsum.o uGnix.o het.o test_ugnix.o unity.o
 tidy:
 	$(RM) *.o
 
