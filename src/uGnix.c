@@ -73,6 +73,26 @@ void prMemSz(unsigned int x)
   fprintf(stderr,"Allocated %.0f %s memory for data...\n",x/convFact,memUnit);
 }
 
+/* display bits of unsigned integer */
+
+void displayBits(unsigned int value, unsigned int noSamples)
+{
+  unsigned int c;
+
+  unsigned int displayMask = 1 << (noSamples - 1);
+
+  for( c=1; c<=noSamples; ++c)
+    {
+      putchar( value & displayMask ? '1' : '0');
+      value <<= 1;
+    }
+  putchar( '\n' );
+}
+
+
+
+
+
 /* string cmp function for use by qsort */
 
 int cstring_cmp(const void *a, const void *b) 

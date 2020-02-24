@@ -77,6 +77,8 @@ int cstring_cmp(const void *a, const void *b);
 
 void prMemSz(unsigned int x);
 
+void displayBits(unsigned int value, unsigned int noSamples);
+
 int isMissing(char* x);
 
 void get_line(FILE* inputFile, struct indiv* ind);
