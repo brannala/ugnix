@@ -188,30 +188,37 @@ void recombination(int chr, double recLoc, chrsample* chrom)
 
 }
 
-static chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
+chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 {
-  chromosome* commonAnc = NULL;
-  commonAnc = malloc(sizeof(chromosome));
-  ancestry* anc1 = ptrchr1->anc;
-  ancestry* anc2 = ptrchr2->anc;
+  chromosome* commonAnc = malloc(sizeof(chromosome));
+  commonAnc->next = NULL;
+  /* ancestry* anc1;
+  anc1 = ptrchr1->anc;
+  ancestry* anc2;
+  anc2 = ptrchr2->anc;
+  commonAnc->anc = malloc(sizeof(ancestry));
+  ancestry* tmp = commonAnc->anc;
   while((anc1 != NULL)&&(anc2 != NULL))
     {
-      commonAnc->anc = malloc(sizeof(ancestry));
-      commonAnc->anc->abits = unionAnc(anc1->abits,anc2->abits);
+      tmp->abits = unionAnc(anc1->abits,anc2->abits);
       if(anc1->position <= anc2->position)
 	{
-	  commonAnc->anc->position = anc1->position;
+	  tmp->position = anc1->position;
 	  anc1 = anc1->next;
 	}
       else
 	{
-	  commonAnc->anc->position = anc2->position;
+	  tmp->position = anc2->position;
 	  anc2 = anc2->next;
 	}
-      commonAnc = commonAnc->next;
-    }
+      if((anc1 != NULL)&&(anc2 != NULL))
+	{ 
+	  tmp->next = malloc(sizeof(ancestry));
+	  tmp = tmp->next;
+	}  
+	} */  
   return(commonAnc);
-}
+} 
 
 static void coalescence(unsigned int* noChrom, int chr1, int chr2, chrsample* chrom)
 {
@@ -275,9 +282,9 @@ int main()
   unsigned int noChrom=20;
   unsigned int noSamples=20;
   //  unsigned int MRCA=0;
-  chromosome* currentChrom;
+  chromosome* currentChrom = NULL;
   chrsample* chromSample = create_sample(noChrom);
-
+  ancestry* tmp = NULL;
   int currChr=0;
   currentChrom = chromSample->chrHead;
   while(currentChrom != NULL)
@@ -299,17 +306,16 @@ int main()
       currentChrom = currentChrom->next;
       currChr++;
       } 
-    recombination(0, 0.6, chromSample);
-   recombination(20, 0.4, chromSample);
-   recombination(14, 0.8, chromSample);
-   recombination(1, 0.06, chromSample);
-   // coalescence(&noChrom, 3, 5, chromSample);
-   currChr=0;
+  recombination(3, 0.6, chromSample);
+  //  coalescence(&noChrom, 19, 2, chromSample);
+  // coalescence(&noChrom, 19, 17, chromSample);
+  // recombination(19, 0.8, chromSample);
+  currChr=0;
   currentChrom = chromSample->chrHead; 
   while(currentChrom != NULL)
     {
       printf("Chr: %d Ancestry segments: ",currChr);
-      ancestry* tmp = currentChrom->anc;
+      tmp = currentChrom->anc;
       while(tmp != NULL)
 	{
 	  printf(" %lf ",tmp->position);  
