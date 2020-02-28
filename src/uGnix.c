@@ -117,24 +117,60 @@ int isMissing(char* x)
     return 1;
 }
 
-/* read one line of input file into struct indiv */
-/* used for parsing by fillData() and readGdata */
+/* read one line of input file into struct indiv and check for file format errors */
+/* used for parsing by readGdata */
 
-void get_line(FILE* inputFile, struct indiv* ind)
+void get_line_checkdata(FILE* inputFile, struct indiv* ind, const regex_t regex)
 {
   long int lineNo=1;
   int nvars;
   char oneLine[1000];
+  int regex_bool;
+  char msgbuf[100];
+
   if((fgets(oneLine,sizeof(oneLine),inputFile)) != NULL)
     {
-      nvars = sscanf(oneLine,"%s %s %s %s %s",ind->indLabel,ind->popLabel,
-		     ind->locusLabel,ind->allele1,ind->allele2);
-      if(nvars != 5)
-	{
-	  fprintf(stderr,"\n %s: error at line %ld, %d != 5 is an incorrect number of entries at: %s\n",
-		  version,lineNo,nvars,strtok(oneLine,"\n"));
-	  exit(1);
+      regex_bool = regexec(&regex, oneLine, 0, NULL, 0);
+        if( !regex_bool ){
+	  nvars = sscanf(oneLine,"%s %s %s %s %s",ind->indLabel,ind->popLabel,
+			 ind->locusLabel,ind->allele1,ind->allele2);
+	  if(nvars != 5)
+	    {
+	      fprintf(stderr,"\n %s: error at line %ld, %d != 5 is an incorrect \
+                           number of entries at: %s\n",
+		      version,lineNo,nvars,strtok(oneLine,"\n"));
+	      exit(1);
+	    }
 	}
+	else if( regex_bool == REG_NOMATCH ){
+	  fprintf(stderr,"\n %s: error at line %ld, at: %s\n",
+		      version,lineNo,strtok(oneLine,"\n"));
+	      exit(1);
+        }
+        else{
+                regerror(regex_bool, &regex, msgbuf, sizeof(msgbuf));
+                fprintf(stderr, "Regex match failed: %s\n", msgbuf);
+                exit(1);
+        }
+      ++lineNo;
+    }
+  else
+    strcpy(ind->popLabel,"eof");
+
+};
+
+/* read one line of input file into struct indiv and check for file format errors */
+/* used for parsing by fillData() */
+
+void get_line(FILE* inputFile, struct indiv* ind)
+{
+  long int lineNo=1;
+  char oneLine[1000];
+
+  if((fgets(oneLine,sizeof(oneLine),inputFile)) != NULL)
+    {
+      sscanf(oneLine,"%s %s %s %s %s",ind->indLabel,ind->popLabel,
+	     ind->locusLabel,ind->allele1,ind->allele2);
       ++lineNo;
     }
   else
@@ -145,9 +181,16 @@ void get_line(FILE* inputFile, struct indiv* ind)
 
 void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
 {
+  int regex_init;
+  regex_t regex;
   int currNoPops=0;
   int currNoLoci=0;
   struct indiv* genos;
+
+  /* Compile regular expression for one line of input */
+  regex_init = regcomp(&regex, "^[[:space:]]*([A-Z,a-z,0-9,.,_,-]+[[:space:]]+){3}[A-Z,a-z,0-9,.,?]+[[:space:]]+[A-Z,a-z,0-9,.,?]+[[:space:]]+$", REG_EXTENDED);
+  if( regex_init ){ fprintf(stderr, "Could not compile regex\n"); exit(1); }
+
   if((genos = malloc(sizeof(struct indiv)))==NULL)
     {
       fprintf(stderr,"%s: out of memory! exiting gracefully...\n",version);
@@ -160,7 +203,7 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
   if(inputFile!=NULL)
     {
       fprintf(stderr,"Getting populations and locus labels...\n");
-      get_line(inputFile,genos);      
+      get_line_checkdata(inputFile,genos,regex);      
       while(strcmp(genos->popLabel,"eof"))
 	{
 	  char* tmp_poplabel;
@@ -175,7 +218,7 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
 	    currNoLoci++;
 	  else
 	    free(tmp_locuslabel);
-	  get_line(inputFile,genos);
+	  get_line_checkdata(inputFile,genos,regex);
 	}
       dpar->locusNames = (gchar **) g_hash_table_get_keys_as_array(dh->lociKeys,&(dpar->noLoci));
       qsort(dpar->locusNames,dpar->noLoci,sizeof(char *),cstring_cmp);  
@@ -198,7 +241,7 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
       for(int i=0; i<dpar->noPops; i++) /* get individual labels in each population */
 	  dh->indKeys[i] =
 	    g_hash_table_new(g_str_hash, g_str_equal);
-      get_line(inputFile,genos);
+      get_line_checkdata(inputFile,genos,regex);
       while(strcmp(genos->popLabel,"eof"))
 	    {
 	      char* tmp_indlabel; 
@@ -236,7 +279,7 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
 		}
 	      else
 		free(tmp_allele2);
-	      get_line(inputFile,genos);
+	      get_line_checkdata(inputFile,genos,regex);
 	    }
       for(int i=0; i<dpar->noPops; i++)
 	{
@@ -246,12 +289,14 @@ void readGData(FILE* inputFile, dhash* dh, datapar* dpar)
 	}
     }
   free(genos);
+  regfree(&regex);
 }
 
 /* create int array of data mapped to multi-dimensional matrix */
 
 void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar)
 {
+
   int n1 = dpar->totNoInd*dpar->noLoci;
   int n2 = dpar->totNoInd;
   struct indiv* genos;

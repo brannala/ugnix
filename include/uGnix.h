@@ -7,6 +7,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <regex.h>
 
 #define MAXLN 100
 #define MAXALLNM 50
@@ -79,8 +80,10 @@ void prMemSz(unsigned int x);
 
 int isMissing(char* x);
 
-void get_line(FILE* inputFile, struct indiv* ind);
+void get_line_checkdata(FILE* inputFile, struct indiv* ind, const regex_t regex);
 
+void get_line(FILE* inputFile, struct indiv* ind);
+  
 void fillData(FILE* inputFile, int* dataArray, dhash* dh, datapar* dpar);
 
 void readGData(FILE *inputFile, dhash* dh, datapar* dpar);
