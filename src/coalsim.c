@@ -97,7 +97,7 @@ void recombination(int chr, double recLoc, chrsample* chrom)
   chromosome* newRight = malloc(sizeof(chromosome));
   newLeft->next = NULL;
   newRight->next = NULL;
-  
+
   newRight->anc = malloc(sizeof(ancestry));
   newRight->anc->abits = 0;
   newRight->anc->position = recLoc;
@@ -132,6 +132,7 @@ void recombination(int chr, double recLoc, chrsample* chrom)
       currAnc->abits = tmp->abits;
       currAnc->position = tmp->position;
       tmp = tmp->next;
+      atHead = 0;
     }
   if( !atHead )
     {
@@ -146,8 +147,7 @@ void recombination(int chr, double recLoc, chrsample* chrom)
   currAnc->abits = 0;
   currAnc->position = 1.0;
   currAnc->next = NULL;
-  
-  
+    
   delete_chrom(chrtmp, chrom);
   chrtmp = chrom->chrHead;
   while(chrtmp->next != NULL)
@@ -190,33 +190,48 @@ void recombination(int chr, double recLoc, chrsample* chrom)
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 {
+  double epsilon = 0.01;
   chromosome* commonAnc = malloc(sizeof(chromosome));
   commonAnc->next = NULL;
-  /* ancestry* anc1;
-  anc1 = ptrchr1->anc;
-  ancestry* anc2;
-  anc2 = ptrchr2->anc;
   commonAnc->anc = malloc(sizeof(ancestry));
+  commonAnc->anc->abits=0;
+  commonAnc->anc->position=0;
+  commonAnc->anc->next = NULL; 
   ancestry* tmp = commonAnc->anc;
+  ancestry* anc1 = ptrchr1->anc;
+  ancestry* anc2 = ptrchr2->anc;
+  
   while((anc1 != NULL)&&(anc2 != NULL))
     {
       tmp->abits = unionAnc(anc1->abits,anc2->abits);
-      if(anc1->position <= anc2->position)
+      if(abs(anc1->position - anc2->position) < epsilon)
 	{
 	  tmp->position = anc1->position;
 	  anc1 = anc1->next;
+	  anc2 = anc2->next;
 	}
       else
 	{
-	  tmp->position = anc2->position;
-	  anc2 = anc2->next;
+	  if(anc1->position < anc2->position)
+	    {
+	      tmp->position = anc1->position;
+	      anc1 = anc1->next;
+	    }
+	  else
+	    {
+	      tmp->position = anc2->position;
+	      anc2 = anc2->next;
+	    }
 	}
-      if((anc1 != NULL)&&(anc2 != NULL))
-	{ 
-	  tmp->next = malloc(sizeof(ancestry));
-	  tmp = tmp->next;
-	}  
-	} */  
+       if((anc1 != NULL)&&(anc2 != NULL))
+	 {
+	   tmp->next = malloc(sizeof(ancestry));
+	   tmp->next->next = NULL;
+	   tmp->next->abits=0;
+	   tmp->next->position=0;
+	   tmp = tmp->next;
+	 }
+    } 
   return(commonAnc);
 } 
 
@@ -237,7 +252,6 @@ static void coalescence(unsigned int* noChrom, int chr1, int chr2, chrsample* ch
     tmp = tmp->next;
   tmp->next = commonAnc;
 }
-
 
 static chrsample* create_sample(int noChrom)
 {
@@ -307,9 +321,13 @@ int main()
       currChr++;
       } 
   recombination(3, 0.6, chromSample);
-  //  coalescence(&noChrom, 19, 2, chromSample);
-  // coalescence(&noChrom, 19, 17, chromSample);
-  // recombination(19, 0.8, chromSample);
+  recombination(19, 0.3, chromSample);
+  coalescence(&noChrom, 19, 21, chromSample);
+  // coalescence(&noChrom, 19, 1, chromSample);
+  // coalescence(&noChrom, 18, 16, chromSample);
+  //recombination(17, 0.8, chromSample);
+  // coalescence(&noChrom, 19, 20, chromSample);
+  //  coalescence(&noChrom, 18, 19, chromSample);
   currChr=0;
   currentChrom = chromSample->chrHead; 
   while(currentChrom != NULL)
