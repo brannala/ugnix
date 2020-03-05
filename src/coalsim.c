@@ -87,6 +87,29 @@ static void delete_sample(chromosome* head)
     }
 }
 
+static double totalAncLength(const chrsample* chrom)
+{
+  chromosome* currChrom = chrom->chrHead;
+  ancestry* tmp_anc; 
+  double lastPosition = 0;
+  double totLength = 0;
+  while(currChrom != NULL)
+    {
+      tmp_anc = currChrom->anc;
+      lastPosition=0;
+      while(tmp_anc != NULL)
+	{
+	  if(tmp_anc->abits)
+	      totLength += tmp_anc->position - lastPosition;
+	  lastPosition = tmp_anc->position;
+	  tmp_anc = tmp_anc->next;
+	}
+      currChrom = currChrom->next;
+    }
+  return(totLength);
+}
+
+
 void recombination(int chr, double recLoc, chrsample* chrom)
 {
   chromosome* chrtmp;
@@ -204,23 +227,23 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
   while((anc1 != NULL)&&(anc2 != NULL))
     {
       tmp->abits = unionAnc(anc1->abits,anc2->abits);
-      if(abs(anc1->position - anc2->position) < epsilon)
+      if((anc1->position - anc2->position) > epsilon)
 	{
-	  tmp->position = anc1->position;
-	  anc1 = anc1->next;
+	  tmp->position = anc2->position;
 	  anc2 = anc2->next;
 	}
       else
 	{
-	  if(anc1->position < anc2->position)
+	  if((anc2->position - anc1->position) > epsilon)
 	    {
 	      tmp->position = anc1->position;
 	      anc1 = anc1->next;
 	    }
 	  else
 	    {
-	      tmp->position = anc2->position;
+	      tmp->position = anc1->position;
 	      anc2 = anc2->next;
+	      anc1 = anc1->next;
 	    }
 	}
        if((anc1 != NULL)&&(anc2 != NULL))
@@ -235,6 +258,25 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
   return(commonAnc);
 } 
 
+static void combineIdentAdjAncSegs(chromosome *ptrchr)
+{
+  ancestry* tmp;
+  ancestry* tmp_del;
+  tmp = ptrchr->anc;
+  while(tmp->next != NULL)
+    {
+      if(tmp->abits == tmp->next->abits)
+	{
+	  tmp_del = tmp->next;
+	  tmp->position = tmp->next->position;
+	  tmp->next = tmp->next->next;
+	  free(tmp_del);
+	}
+      if(tmp->next != NULL)
+	tmp = tmp->next;
+    }
+}
+
 static void coalescence(unsigned int* noChrom, int chr1, int chr2, chrsample* chrom)
 {
   *noChrom = *noChrom - 1;
@@ -245,6 +287,7 @@ static void coalescence(unsigned int* noChrom, int chr1, int chr2, chrsample* ch
   ptrchr1 = getChrPtr(chr1, chrom);
   ptrchr2 = getChrPtr(chr2, chrom);
   commonAnc = mergeChr(ptrchr1, ptrchr2);
+  combineIdentAdjAncSegs(commonAnc);
   delete_chrom(ptrchr1,chrom);
   delete_chrom(ptrchr2,chrom);
   tmp = chrom->chrHead;
@@ -320,14 +363,24 @@ int main()
       currentChrom = currentChrom->next;
       currChr++;
       } 
-  recombination(3, 0.6, chromSample);
-  recombination(19, 0.3, chromSample);
-  coalescence(&noChrom, 19, 21, chromSample);
-  // coalescence(&noChrom, 19, 1, chromSample);
-  // coalescence(&noChrom, 18, 16, chromSample);
-  //recombination(17, 0.8, chromSample);
+  //  recombination(3, 0.6, chromSample);
+
   // coalescence(&noChrom, 19, 20, chromSample);
-  //  coalescence(&noChrom, 18, 19, chromSample);
+  // recombination(10, 0.4, chromSample);
+  // coalescence(&noChrom, 19, 20, chromSample);
+  // coalescence(&noChrom, 18, 19, chromSample);
+  // recombination(17, 0.8, chromSample);
+  // coalescence(&noChrom, 19, 20, chromSample);
+  coalescence(&noChrom, 1, 2, chromSample);
+  coalescence(&noChrom, 17, 18, chromSample);
+  coalescence(&noChrom, 0, 1, chromSample);
+  coalescence(&noChrom, 15, 16, chromSample);
+  recombination(15, 0.8, chromSample);
+  coalescence(&noChrom, 16, 1, chromSample);
+  coalescence(&noChrom, 14, 15, chromSample);
+  recombination(7, 0.8, chromSample);
+  coalescence(&noChrom, 3, 15, chromSample);
+  coalescence(&noChrom, 13, 14, chromSample);
   currChr=0;
   currentChrom = chromSample->chrHead; 
   while(currentChrom != NULL)
@@ -342,7 +395,8 @@ int main()
 	  } 
       currentChrom = currentChrom->next;
       currChr++;
-      } 
+      }
+  printf("Totalanclength: %lf",totalAncLength(chromSample));
   delete_sample(chromSample->chrHead);
   free(chromSample); 
 }
