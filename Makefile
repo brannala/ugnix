@@ -14,7 +14,7 @@ het: het.o uGnix.o -lglib-2.0
 gsum: gsum.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) gsum.o uGnix.o -lglib-2.0 -lm -o gsum
 coalsim: coalsim.o uGnix.o -lglib-2.0
-	$(CC) $(PROFILE) coalsim.o uGnix.o -lglib-2.0 -lm -o coalsim
+	$(CC) $(PROFILE) coalsim.o uGnix.o -lglib-2.0 -lm -lgsl -lgslcblas -o coalsim
 het.o: het.c uGnix.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 gsum.o: gsum.c uGnix.h

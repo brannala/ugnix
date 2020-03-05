@@ -86,7 +86,7 @@ void displayBits(unsigned int value, unsigned int noSamples)
       putchar( value & displayMask ? '1' : '0');
       value <<= 1;
     }
-  putchar( '\n' );
+  //  putchar( '\n' );
 }
 
 

@@ -1,6 +1,10 @@
 #include<uGnix.h>
 #include<limits.h>
 #include<assert.h>
+#include<gsl/gsl_rng.h>
+#include<gsl/gsl_randist.h>
+
+gsl_rng * r;
 
 struct ancestry
 {
@@ -110,8 +114,9 @@ static double totalAncLength(const chrsample* chrom)
 }
 
 
-void recombination(int chr, double recLoc, chrsample* chrom)
+void recombination(unsigned int* noChrom, double recLoc, chrsample* chrom)
 {
+  int chr = gsl_rng_uniform_int(r, *noChrom - 1);
   chromosome* chrtmp;
   chrtmp = getChrPtr(chr, chrom);
   ancestry* tmp = chrtmp->anc;
@@ -187,6 +192,7 @@ void recombination(int chr, double recLoc, chrsample* chrom)
     {
       chrtmp->next = newLeft;
       chrtmp = chrtmp->next;
+      *noChrom = *noChrom + 1;
     }
   else
     {
@@ -202,18 +208,21 @@ void recombination(int chr, double recLoc, chrsample* chrom)
       currAnc = currAnc->next;
     }
   if( sumAnc != 0 ) // check that chromosome is ancestral to sample -- otherwise discard
-    chrtmp->next = newRight;
+    {
+      chrtmp->next = newRight;
+      *noChrom = *noChrom + 1;
+    }
     else
     {
       delete_anc(newRight->anc);
       free(newRight);
     }
-
+  *noChrom = *noChrom - 1;
 }
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 {
-  double epsilon = 0.01;
+  double epsilon = 0.000001;
   chromosome* commonAnc = malloc(sizeof(chromosome));
   commonAnc->next = NULL;
   commonAnc->anc = malloc(sizeof(ancestry));
@@ -277,8 +286,23 @@ static void combineIdentAdjAncSegs(chromosome *ptrchr)
     }
 }
 
-static void coalescence(unsigned int* noChrom, int chr1, int chr2, chrsample* chrom)
+static void coalescence(unsigned int* noChrom, chrsample* chrom)
 {
+
+  int chr1; 
+  int chr2;
+  if(*noChrom > 2)
+    {
+      chr1 = gsl_rng_uniform_int(r, *noChrom - 1);
+      chr2 = gsl_rng_uniform_int(r, *noChrom - 2);
+      if(chr2 >= chr1)
+	chr2++;
+    }
+  else
+    {
+      chr1 = 0;
+      chr2 = 1;
+    }
   *noChrom = *noChrom - 1;
   chromosome* tmp;
   chromosome* ptrchr1 = NULL;
@@ -290,10 +314,15 @@ static void coalescence(unsigned int* noChrom, int chr1, int chr2, chrsample* ch
   combineIdentAdjAncSegs(commonAnc);
   delete_chrom(ptrchr1,chrom);
   delete_chrom(ptrchr2,chrom);
-  tmp = chrom->chrHead;
-  while(tmp->next != NULL)
-    tmp = tmp->next;
-  tmp->next = commonAnc;
+  if(*noChrom > 1)
+    {
+      tmp = chrom->chrHead;
+      while(tmp->next != NULL)
+	tmp = tmp->next;
+      tmp->next = commonAnc;
+    }
+  else
+    chrom->chrHead = commonAnc;
 }
 
 static chrsample* create_sample(int noChrom)
@@ -336,6 +365,17 @@ char version[] = "coalsim";
 
 int main()
 {
+  const gsl_rng_type * T;
+
+
+ /* create a generator chosen by the
+    environment variable GSL_RNG_TYPE */
+
+  gsl_rng_env_setup();
+  // gsl_rng_default_seed = 45567; 
+  T = gsl_rng_default;
+  r = gsl_rng_alloc (T);
+
   unsigned int noChrom=20;
   unsigned int noSamples=20;
   //  unsigned int MRCA=0;
@@ -344,59 +384,45 @@ int main()
   ancestry* tmp = NULL;
   int currChr=0;
   currentChrom = chromSample->chrHead;
-  while(currentChrom != NULL)
-    {
-      printf("Chr: %d",currChr);
-      printf(" Segment boundary: %lf Ancestry Bits: ",currentChrom->anc->position);  
-      displayBits(currentChrom->anc->abits,noSamples);
-      currentChrom = currentChrom->next;
-      currChr++;
-      } 
-  //  delete_chrom(getChrPtr(0, chromSample), chromSample);
-  currChr=0;
-  currentChrom = chromSample->chrHead;
-  while(currentChrom != NULL)
-    {
-      printf("Chr: %d",currChr);
-      printf(" Segment boundary: %lf Ancestry Bits: ",currentChrom->anc->position);  
-      displayBits(currentChrom->anc->abits,noSamples);
-      currentChrom = currentChrom->next;
-      currChr++;
-      } 
   //  recombination(3, 0.6, chromSample);
 
   // coalescence(&noChrom, 19, 20, chromSample);
-  // recombination(10, 0.4, chromSample);
+  // 
   // coalescence(&noChrom, 19, 20, chromSample);
   // coalescence(&noChrom, 18, 19, chromSample);
-  // recombination(17, 0.8, chromSample);
-  // coalescence(&noChrom, 19, 20, chromSample);
-  coalescence(&noChrom, 1, 2, chromSample);
-  coalescence(&noChrom, 17, 18, chromSample);
-  coalescence(&noChrom, 0, 1, chromSample);
-  coalescence(&noChrom, 15, 16, chromSample);
-  recombination(15, 0.8, chromSample);
-  coalescence(&noChrom, 16, 1, chromSample);
-  coalescence(&noChrom, 14, 15, chromSample);
-  recombination(7, 0.8, chromSample);
-  coalescence(&noChrom, 3, 15, chromSample);
-  coalescence(&noChrom, 13, 14, chromSample);
+  int noRec=0;
+  while(noChrom > 1)
+  {
+    if(gsl_rng_uniform_pos(r) > 0.85)
+      coalescence(&noChrom, chromSample);
+    else
+      {
+	recombination(&noChrom, gsl_rng_uniform_pos(r), chromSample);
+	noRec++;
+      }
+  }
+
+  // coalescence(&noChrom, chromSample);
   currChr=0;
   currentChrom = chromSample->chrHead; 
   while(currentChrom != NULL)
     {
-      printf("Chr: %d Ancestry segments: ",currChr);
+      printf("\nChr: %d Anc: ",currChr);
       tmp = currentChrom->anc;
       while(tmp != NULL)
 	{
-	  printf(" %lf ",tmp->position);  
 	  displayBits(tmp->abits,noSamples);
+	  printf(" %lf ",tmp->position);  
 	  tmp = tmp->next;
 	  } 
       currentChrom = currentChrom->next;
       currChr++;
       }
-  printf("Totalanclength: %lf",totalAncLength(chromSample));
+  printf("\nTotalanclength: %lf",totalAncLength(chromSample));
+  printf("\nNo Rec: %d",noRec);
+  printf("\nNoChrom: %d\n",noChrom);
+  //  printf("U(0,1): %lf\n",gsl_rng_uniform_pos(r));
+  // printf("U(0,1): %lf",gsl_ran_flat(r,0,1.0));
   delete_sample(chromSample->chrHead);
   free(chromSample); 
 }
