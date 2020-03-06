@@ -26,6 +26,13 @@ typedef struct
   chromosome* chrHead;
 } chrsample;
 
+typedef struct
+{
+  double location;
+  chromosome* chrom;
+} recombination_event;
+
+
 static chromosome* getChrPtr(int chr, chrsample* chrom)
 {
   chromosome* tmp = chrom->chrHead;
@@ -113,12 +120,17 @@ static double totalAncLength(const chrsample* chrom)
   return(totLength);
 }
 
-
-void recombination(unsigned int* noChrom, double recLoc, chrsample* chrom)
+void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 {
-  int chr = gsl_rng_uniform_int(r, *noChrom - 1);
+  recEv->location = 0.8;
+  recEv->chrom = getChrPtr(4, chrom);
+}
+
+
+void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom)
+{
   chromosome* chrtmp;
-  chrtmp = getChrPtr(chr, chrom);
+  chrtmp = recEv.chrom;
   ancestry* tmp = chrtmp->anc;
   ancestry* currAnc = NULL;
   chromosome* newLeft = malloc(sizeof(chromosome));
@@ -128,12 +140,12 @@ void recombination(unsigned int* noChrom, double recLoc, chrsample* chrom)
 
   newRight->anc = malloc(sizeof(ancestry));
   newRight->anc->abits = 0;
-  newRight->anc->position = recLoc;
+  newRight->anc->position = recEv.location;
   newRight->anc->next = NULL;
   currAnc = newRight->anc;
   while( tmp != NULL )
     {
-      if(recLoc < tmp->position)
+      if(recEv.location < tmp->position)
 	{
 	  currAnc->next = malloc(sizeof(ancestry));
 	  currAnc = currAnc->next;
@@ -149,7 +161,7 @@ void recombination(unsigned int* noChrom, double recLoc, chrsample* chrom)
   tmp = chrtmp->anc;
   currAnc = newLeft->anc;
   int atHead = 1;
-  while( tmp->position < recLoc )
+  while( tmp->position < recEv.location )
     {
       if( !atHead )
 	{
@@ -169,7 +181,7 @@ void recombination(unsigned int* noChrom, double recLoc, chrsample* chrom)
       currAnc->next = NULL;
     }
   currAnc->abits = tmp->abits;
-  currAnc->position = recLoc;
+  currAnc->position = recEv.location;
   currAnc->next = malloc(sizeof(ancestry));
   currAnc = currAnc->next;
   currAnc->abits = 0;
@@ -367,15 +379,15 @@ int main()
 {
   const gsl_rng_type * T;
 
-
  /* create a generator chosen by the
     environment variable GSL_RNG_TYPE */
-
   gsl_rng_env_setup();
+
   // gsl_rng_default_seed = 45567; 
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
 
+  recombination_event recombEvent;
   unsigned int noChrom=20;
   unsigned int noSamples=20;
   //  unsigned int MRCA=0;
@@ -391,7 +403,7 @@ int main()
   // coalescence(&noChrom, 19, 20, chromSample);
   // coalescence(&noChrom, 18, 19, chromSample);
   int noRec=0;
-  while(noChrom > 1)
+      /*  while(noChrom > 1)
   {
     if(gsl_rng_uniform_pos(r) > 0.85)
       coalescence(&noChrom, chromSample);
@@ -400,7 +412,10 @@ int main()
 	recombination(&noChrom, gsl_rng_uniform_pos(r), chromSample);
 	noRec++;
       }
-  }
+      } */
+
+  getRecEvent(chromSample, 0.6, &recombEvent);
+  recombination(&noChrom,recombEvent,chromSample);
 
   // coalescence(&noChrom, chromSample);
   currChr=0;
