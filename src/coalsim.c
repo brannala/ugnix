@@ -122,10 +122,32 @@ static double totalAncLength(const chrsample* chrom)
 
 void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 {
-  recEv->location = 0.8;
-  recEv->chrom = getChrPtr(4, chrom);
+  chromosome* currChrom = chrom->chrHead;
+  ancestry* tmp_anc; 
+  double lastPosition = 0;
+  double currLength = 0;
+  unsigned int foundPosition=0;
+  while((currChrom != NULL)&&(!foundPosition))
+    {
+      tmp_anc = currChrom->anc;
+      lastPosition=0;
+      double lastLength = currLength;
+      while((tmp_anc != NULL)&&(!foundPosition))
+	{
+	  if(tmp_anc->abits)
+	      currLength += tmp_anc->position - lastPosition;
+	  if(currLength > eventPos)
+	    {
+	      recEv->location = eventPos - lastLength;
+	      recEv->chrom = currChrom;
+	      foundPosition=1;
+	    }
+	  lastPosition = tmp_anc->position;
+	  tmp_anc = tmp_anc->next;
+	}
+      currChrom = currChrom->next;
+    }
 }
-
 
 void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom)
 {
@@ -373,6 +395,33 @@ static chrsample* create_sample(int noChrom)
   return(chromSample);
 }
 
+int TestMRCAForAll(chrsample* chrom, unsigned int noSamples)
+{
+  unsigned int mrca = 0;
+  for(int i=0; i <noSamples; i++)
+    {
+      mrca += pow(2,i);
+    }
+  chromosome* currChrom = chrom->chrHead;
+  ancestry* tmp_anc;
+  while(currChrom != NULL)
+    {
+      tmp_anc = currChrom->anc;
+      while(tmp_anc != NULL)
+	{
+	  if((tmp_anc->abits > 0)&&(tmp_anc->abits != mrca))
+	    return(0);
+	  tmp_anc = tmp_anc->next;
+	}
+    }
+  return(1);
+}
+
+
+
+
+
+
 char version[] = "coalsim";
 
 int main()
@@ -390,32 +439,79 @@ int main()
   recombination_event recombEvent;
   unsigned int noChrom=20;
   unsigned int noSamples=20;
-  //  unsigned int MRCA=0;
   chromosome* currentChrom = NULL;
   chrsample* chromSample = create_sample(noChrom);
   ancestry* tmp = NULL;
   int currChr=0;
+  double ancLength=0;
+  double eventLocation=0;
+  double totalTime=0;
+  double interArrivalTime=0;
   currentChrom = chromSample->chrHead;
-  //  recombination(3, 0.6, chromSample);
-
-  // coalescence(&noChrom, 19, 20, chromSample);
-  // 
-  // coalescence(&noChrom, 19, 20, chromSample);
-  // coalescence(&noChrom, 18, 19, chromSample);
+  double popSize = 1000;
+  double recRate = 0.1;
+  double mutRate = 0.000001;
+  double totRate=0;
+  double coalProb = 0;
+  double recProb = 0;
+  
+  int noMutations=0;
   int noRec=0;
-      /*  while(noChrom > 1)
-  {
-    if(gsl_rng_uniform_pos(r) > 0.85)
-      coalescence(&noChrom, chromSample);
-    else
-      {
-	recombination(&noChrom, gsl_rng_uniform_pos(r), chromSample);
-	noRec++;
-      }
-      } */
+  int noCoal=0;
 
-  getRecEvent(chromSample, 0.6, &recombEvent);
-  recombination(&noChrom,recombEvent,chromSample);
+
+
+  while((noChrom > 1)&&(!TestMRCAForAll(chromSample, noSamples)))
+  {
+    double prob = 0;
+    ancLength = totalAncLength(chromSample);
+    totRate = (noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize))+(recRate +mutRate)*ancLength;
+    coalProb = ((noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize)))/totRate;
+    recProb = recRate*ancLength/totRate;
+    assert(coalProb + recProb < 1.0);
+    interArrivalTime = gsl_ran_exponential(r, 1.0/totRate);
+    printf("interArrivaltime: %lf NoRec: %d NoCoal: %d\n",interArrivalTime,noRec,noCoal);
+    
+    totalTime += interArrivalTime;
+    prob = gsl_rng_uniform_pos(r);
+    if(prob <= coalProb)
+      {
+	coalescence(&noChrom, chromSample);
+	noCoal++;
+      }
+    else
+      if(prob <= (coalProb + recProb))
+	{
+	  eventLocation = ancLength*gsl_rng_uniform_pos(r);
+	  getRecEvent(chromSample, eventLocation, &recombEvent);
+	  recombination(&noChrom,recombEvent,chromSample);
+	  noRec++;
+	}
+      else
+	noMutations++;
+
+    printf("recNo: %d\n",noRec);
+    currChr=0;
+    currentChrom = chromSample->chrHead; 
+    while(currentChrom != NULL)
+      {
+	printf("\nChr: %d Anc: ",currChr);
+	tmp = currentChrom->anc;
+	while(tmp != NULL)
+	  {
+	    displayBits(tmp->abits,noSamples);
+	    printf(" %lf ",tmp->position);  
+	    tmp = tmp->next;
+	  } 
+	currentChrom = currentChrom->next;
+	currChr++;
+	} 
+    
+  } 
+  /*  ancLength = totalAncLength(chromSample);
+  eventLocation = ancLength*gsl_rng_uniform_pos(r);
+  getRecEvent(chromSample, eventLocation, &recombEvent);
+  recombination(&noChrom,recombEvent,chromSample); */
 
   // coalescence(&noChrom, chromSample);
   currChr=0;
