@@ -132,13 +132,16 @@ void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
       tmp_anc = currChrom->anc;
       lastPosition=0;
       double lastLength = currLength;
+      double nonAncestralLength=0;
       while((tmp_anc != NULL)&&(!foundPosition))
 	{
 	  if(tmp_anc->abits)
 	      currLength += tmp_anc->position - lastPosition;
+	  else
+	    nonAncestralLength += tmp_anc->position - lastPosition;
 	  if(currLength > eventPos)
 	    {
-	      recEv->location = eventPos - lastLength;
+	      recEv->location = eventPos + nonAncestralLength - lastLength;
 	      recEv->chrom = currChrom;
 	      foundPosition=1;
 	    }
@@ -222,18 +225,11 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       sumAnc += currAnc->abits;
       currAnc = currAnc->next;
     }
-  if( sumAnc != 0 ) // check that chromosome is ancestral to sample -- otherwise discard
-    {
-      chrtmp->next = newLeft;
-      chrtmp = chrtmp->next;
-      *noChrom = *noChrom + 1;
-    }
-  else
-    {
-      delete_anc(newLeft->anc);
-      free(newLeft);
-    }
-
+  assert(sumAnc != 0);
+  chrtmp->next = newLeft;
+  chrtmp = chrtmp->next;
+  *noChrom = *noChrom + 1;
+  
   currAnc = newRight->anc;
   sumAnc=0;
   while( currAnc != NULL)
@@ -241,22 +237,16 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       sumAnc += currAnc->abits;
       currAnc = currAnc->next;
     }
-  if( sumAnc != 0 ) // check that chromosome is ancestral to sample -- otherwise discard
-    {
-      chrtmp->next = newRight;
-      *noChrom = *noChrom + 1;
-    }
-    else
-    {
-      delete_anc(newRight->anc);
-      free(newRight);
-    }
+  assert(sumAnc != 0);
+  
+  chrtmp->next = newRight;
+  *noChrom = *noChrom + 1;
   *noChrom = *noChrom - 1;
 }
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 {
-  double epsilon = 0.000001;
+  double epsilon = 1e-10;
   chromosome* commonAnc = malloc(sizeof(chromosome));
   commonAnc->next = NULL;
   commonAnc->anc = malloc(sizeof(ancestry));
@@ -395,13 +385,23 @@ static chrsample* create_sample(int noChrom)
   return(chromSample);
 }
 
-int TestMRCAForAll(chrsample* chrom, unsigned int noSamples)
+unsigned long long int ipow( unsigned long long int base, int exp )
 {
-  unsigned int mrca = 0;
-  for(int i=0; i <noSamples; i++)
+  unsigned long long int result = 1;
+  while( exp )
     {
-      mrca += pow(2,i);
+      if ( exp & 1 )
+        {
+	  result *= (unsigned long long int)base;
+        }
+      exp >>= 1;
+      base *= base;
     }
+  return result;
+}
+
+int TestMRCAForAll(chrsample* chrom, unsigned int mrca)
+{
   chromosome* currChrom = chrom->chrHead;
   ancestry* tmp_anc;
   while(currChrom != NULL)
@@ -413,14 +413,10 @@ int TestMRCAForAll(chrsample* chrom, unsigned int noSamples)
 	    return(0);
 	  tmp_anc = tmp_anc->next;
 	}
+      currChrom = currChrom->next;
     }
   return(1);
 }
-
-
-
-
-
 
 char version[] = "coalsim";
 
@@ -448,9 +444,9 @@ int main()
   double totalTime=0;
   double interArrivalTime=0;
   currentChrom = chromSample->chrHead;
-  double popSize = 1000;
+  double popSize = 10000;
   double recRate = 0.1;
-  double mutRate = 0.000001;
+  double mutRate = 3.0;
   double totRate=0;
   double coalProb = 0;
   double recProb = 0;
@@ -458,19 +454,27 @@ int main()
   int noMutations=0;
   int noRec=0;
   int noCoal=0;
+  unsigned int mrca=0;
+  for(unsigned int i=0; i <noSamples; i++)
+    {
+      mrca += ipow(2,i);
+    }
 
 
-
-  while((noChrom > 1)&&(!TestMRCAForAll(chromSample, noSamples)))
+  int eventNo = 0;
+  while((noChrom > 1) && (!TestMRCAForAll(chromSample, mrca)) )
   {
     double prob = 0;
+    eventNo++;
     ancLength = totalAncLength(chromSample);
+    assert(ancLength <= noSamples);
     totRate = (noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize))+(recRate +mutRate)*ancLength;
     coalProb = ((noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize)))/totRate;
     recProb = recRate*ancLength/totRate;
     assert(coalProb + recProb < 1.0);
     interArrivalTime = gsl_ran_exponential(r, 1.0/totRate);
-    printf("interArrivaltime: %lf NoRec: %d NoCoal: %d\n",interArrivalTime,noRec,noCoal);
+    if(!(eventNo % 5000))
+      printf("interArrivaltime: %lf NoRec: %d NoCoal: %d\n",interArrivalTime,noRec,noCoal);
     
     totalTime += interArrivalTime;
     prob = gsl_rng_uniform_pos(r);
@@ -483,6 +487,7 @@ int main()
       if(prob <= (coalProb + recProb))
 	{
 	  eventLocation = ancLength*gsl_rng_uniform_pos(r);
+	  assert(eventLocation <= ancLength);
 	  getRecEvent(chromSample, eventLocation, &recombEvent);
 	  recombination(&noChrom,recombEvent,chromSample);
 	  noRec++;
@@ -490,7 +495,7 @@ int main()
       else
 	noMutations++;
 
-    printf("recNo: %d\n",noRec);
+    /*    printf("recNo: %d\n",noRec);
     currChr=0;
     currentChrom = chromSample->chrHead; 
     while(currentChrom != NULL)
@@ -505,16 +510,36 @@ int main()
 	  } 
 	currentChrom = currentChrom->next;
 	currChr++;
-	} 
+	} */
     
   } 
   /*  ancLength = totalAncLength(chromSample);
   eventLocation = ancLength*gsl_rng_uniform_pos(r);
   getRecEvent(chromSample, eventLocation, &recombEvent);
   recombination(&noChrom,recombEvent,chromSample); */
-
-  // coalescence(&noChrom, chromSample);
+  printf("recNo: %d\n",noRec);
+  printf("mutNo: %d\n",noMutations);
   currChr=0;
+  currentChrom = chromSample->chrHead; 
+  while(currentChrom != NULL)
+    {
+      printf("\nChr: %d Anc: ",currChr);
+      tmp = currentChrom->anc;
+      while(tmp != NULL)
+	{
+	  displayBits(tmp->abits,noSamples);
+	  printf(" %lf ",tmp->position);  
+	  tmp = tmp->next;
+	} 
+      currentChrom = currentChrom->next;
+      currChr++;
+    }
+
+
+
+  
+  // coalescence(&noChrom, chromSample);
+  /* currChr=0;
   currentChrom = chromSample->chrHead; 
   while(currentChrom != NULL)
     {
@@ -531,7 +556,7 @@ int main()
       }
   printf("\nTotalanclength: %lf",totalAncLength(chromSample));
   printf("\nNo Rec: %d",noRec);
-  printf("\nNoChrom: %d\n",noChrom);
+  printf("\nNoChrom: %d\n",noChrom); */
   //  printf("U(0,1): %lf\n",gsl_rng_uniform_pos(r));
   // printf("U(0,1): %lf",gsl_ran_flat(r,0,1.0));
   delete_sample(chromSample->chrHead);
