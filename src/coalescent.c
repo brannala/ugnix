@@ -91,6 +91,12 @@ double totalAncLength(const chrsample* chrom)
   return(totLength);
 }
 
+/* 
+eventPos is the absolute position of rec event on cumulative ancestral 
+chromosome material (ancLength) -> getRecEvent finds the recombinant chromosome 
+and relative position of recombination event on that chromosome modifies recEv 
+*/
+
 void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 {
   chromosome* currChrom = chrom->chrHead;
