@@ -8,7 +8,7 @@ PROFILE = -g
 
 # build programs
 
-all: gsum het
+all: gsum het coalsim
 het: het.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) het.o uGnix.o -lglib-2.0 -lm -o het
 gsum: gsum.o uGnix.o -lglib-2.0
@@ -26,14 +26,14 @@ coalescent.o: coalescent.c uGnix.h coalescent.h
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim test_ugnix test_coalescent
+	$(RM) gsum het coalsim test_ugnix test_coalescent runtests
 	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o test_ugnix.o test_coalescent.o unity.o
 tidy:
 	$(RM) *.o
 
 # build test suite
 
-tests: test_ugnix test_coalescent
+tests: test_ugnix test_coalescent runtests
 test_ugnix: test_ugnix.o uGnix.o unity.o -lglib-2.0
 	$(CC) $(PROFILE) test_ugnix.o uGnix.o unity.o -lglib-2.0 -lm -o test_ugnix
 test_ugnix.o: test_ugnix.c uGnix.h unity.h
@@ -44,7 +44,16 @@ test_coalescent: test_coalescent.o coalescent.o unity.o -lglib-2.0 -lm -lgsl -lg
 	$(CC) $(PROFILE) test_coalescent.o coalescent.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_coalescent
 test_coalescent.o: test_coalescent.c coalescent.h uGnix.h unity.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
-
+runtests:
+	@eval $$(echo "#!/bin/bash" > runtests)
+	@eval $$(echo "echo \"\nRunning tests on ugnix.c ...\"" >> runtests)
+	@eval $$(echo "./test_ugnix" >> runtests)
+	@eval $$(echo "echo \"\nRunning tests on coalescent.c ...\"" >> runtests)
+	@eval $$(echo "./test_coalescent" >>runtests)
+	@eval $$(chmod +x runtests) 	
 testsclean:
 	$(RM) test_ugnix
-	$(RM) test_ugnix.o unity.o uGnix.o
+	$(RM) test_coalescent
+	$(RM) runtests
+	$(RM) test_ugnix.o unity.o uGnix.o test_coalescent.o coalescent.o
+

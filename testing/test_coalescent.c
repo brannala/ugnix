@@ -10,8 +10,9 @@ ancestry* currap=NULL;
 chrsample* chromSample=NULL;
 chrsample* chrSanc=NULL;
 chrsample* chrSnonanc=NULL;
-recombination_event* recEv=NULL;
+recombination_event recEv;
 int sampleNo = 10;
+unsigned int noChrom = 10;
 unsigned int allAnc;
 
 
@@ -19,13 +20,12 @@ void setUp(void) {
   
   allAnc = ipow(2,sampleNo);
   chromSample = create_sample(10);
-  recEv = malloc(sizeof(recombination_event));
   tmp2 = chromSample->chrHead;
   tmp2 = tmp2->next;
 
   // setup for tests test_totalAncLength and test_getRecEvent
   // chromosome 1:
-  // --0--|0.2|--2--|0.42|--4--|1|
+  // --0--|0.2|--2--|0.42|--0--|0.64|--4--|1|
   currap = tmp2->anc;
   currap->abits = 0;
   currap->position = 0.2;
@@ -122,11 +122,11 @@ void setUp(void) {
 
 void tearDown(void) {
   //  delete_sample(chromSample->chrHead);
-  //free(chromSample);
-  //delete_sample(chrSanc->chrHead);
-  //free(chrSanc);
-  //delete_sample(chrSnonanc->chrHead);
-  //free(chrSnonanc);
+  // free(chromSample);
+  // delete_sample(chrSanc->chrHead);
+  // free(chrSanc);
+  // delete_sample(chrSnonanc->chrHead);
+  // free(chrSnonanc);
 }
 
 void test_unionAnc(void) {
@@ -147,17 +147,70 @@ void test_totalAncLength(void) {
 }  
 
 void test_getRecEvent(void) {
-  getRecEvent(chromSample,2.73,recEv);
+  getRecEvent(chromSample,2.73,&recEv);
   tmp3 = chromSample->chrHead;
   for(int i=0; i<3; i++)
     tmp3 = tmp3->next;
-  TEST_ASSERT_EQUAL_PTR(tmp3, recEv->chrom);
-  TEST_ASSERT_EQUAL_FLOAT(0.95,recEv->location);
+  TEST_ASSERT_EQUAL_PTR(tmp3, recEv.chrom);
+  TEST_ASSERT_EQUAL_FLOAT(0.95,recEv.location);
 }  
 
 void test_TestMRCAForAll(void) {
   TEST_ASSERT_EQUAL(1, TestMRCAForAll(chrSanc,allAnc));
   TEST_ASSERT_EQUAL(0, TestMRCAForAll(chrSnonanc,allAnc));
+}
+
+void test_recombination(void) {
+  getRecEvent(chromSample,1.42,&recEv);
+  recombination(&noChrom,recEv,chromSample);
+  tmp3 = chromSample->chrHead;
+  for(int i=0; i<(noChrom-2); i++)
+    tmp3 = tmp3->next;
+  TEST_ASSERT_EQUAL_UINT32(0,tmp3->anc->abits);
+  TEST_ASSERT_EQUAL_FLOAT(0.2, tmp3->anc->position);
+  TEST_ASSERT_EQUAL_UINT32(2,tmp3->anc->next->abits);
+  TEST_ASSERT_EQUAL_FLOAT(0.42, tmp3->anc->next->position);
+  tmp3 = tmp3->next; 
+  TEST_ASSERT_EQUAL_UINT32(0,tmp3->anc->abits);
+  TEST_ASSERT_EQUAL_FLOAT(0.84, tmp3->anc->position);
+  TEST_ASSERT_EQUAL_UINT32(4,tmp3->anc->next->abits);
+  TEST_ASSERT_EQUAL_FLOAT(1.0, tmp3->anc->next->position);
+  TEST_ASSERT_EQUAL_UINT32(11, noChrom);
+}
+
+void test_mergeChr(void) {
+  chromosome* chr1;
+  chromosome* chr2;
+  chromosome* chrm;
+  chr1 = malloc(sizeof(chromosome));
+  chr2 = malloc(sizeof(chromosome));
+  // chr1: --1--|0.2|--3--|0.7|--0--|1.0|
+  chr1->anc = malloc(sizeof(ancestry));
+  chr1->anc->abits = 1;
+  chr1->anc->position = 0.2;
+  chr1->anc->next = malloc(sizeof(ancestry));
+  chr1->anc->next->abits = 3;
+  chr1->anc->next->position = 0.7;
+  chr1->anc->next->next = malloc(sizeof(ancestry));
+  chr1->anc->next->next->abits = 0;
+  chr1->anc->next->next->position = 1;
+  chr1->anc->next->next->next = NULL;
+  // chr2: --2--|0.5|--6--|1.0|
+  chr2->anc = malloc(sizeof(ancestry));
+  chr2->anc->abits = 2;
+  chr2->anc->position = 0.5;
+  chr2->anc->next = malloc(sizeof(ancestry));
+  chr2->anc->next->abits = 6;
+  chr2->anc->next->position = 1;
+  // chrm: --3--|0.5|--7--|0.7|--6--|1.0|
+  chrm = mergeChr(chr1,chr2);
+  combineIdentAdjAncSegs(chrm);  
+  TEST_ASSERT_EQUAL_UINT32(3, chrm->anc->abits);
+  TEST_ASSERT_EQUAL_FLOAT(0.5, chrm->anc->position);
+  TEST_ASSERT_EQUAL_UINT32(7, chrm->anc->next->abits);
+  TEST_ASSERT_EQUAL_FLOAT(0.7, chrm->anc->next->position);
+  TEST_ASSERT_EQUAL_UINT32(6, chrm->anc->next->next->abits);
+  TEST_ASSERT_EQUAL_FLOAT(1.0, chrm->anc->next->next->position);
 }
 
 
@@ -169,5 +222,7 @@ int main(void) {
     RUN_TEST(test_totalAncLength);
     RUN_TEST(test_getRecEvent);
     RUN_TEST(test_TestMRCAForAll);
+    RUN_TEST(test_recombination);
+    RUN_TEST(test_mergeChr);
     return UNITY_END();
 }
