@@ -213,6 +213,11 @@ void test_mergeChr(void) {
   TEST_ASSERT_EQUAL_FLOAT(1.0, chrm->anc->next->next->position);
 }
 
+void test_coalescence(void) {
+
+}
+
+
 
 // not needed when using generate_test_runner.rb
 int main(void) {

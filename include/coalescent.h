@@ -29,6 +29,12 @@ typedef struct
   chromosome* chrom;
 } recombination_event;
 
+typedef struct
+{
+  int chr1;
+  int chr2;
+} coalescent_pair;
+
 chromosome* getChrPtr(int chr, chrsample* chrom);
 
 unsigned int unionAnc(unsigned int anc1, unsigned int anc2);
@@ -49,10 +55,12 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2);
 
 void combineIdentAdjAncSegs(chromosome *ptrchr);
 
-void coalescence(gsl_rng * r, unsigned int* noChrom, chrsample* chrom);
+void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom);
 
 unsigned long long int ipow( unsigned long long int base, int exp);
 
 int TestMRCAForAll(chrsample* chrom, unsigned int mrca);
 
 chrsample* create_sample(int noChrom);
+
+void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair);

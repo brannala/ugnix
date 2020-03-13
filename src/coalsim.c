@@ -69,7 +69,9 @@ int main()
     prob = gsl_rng_uniform_pos(r);
     if(prob <= coalProb)
       {
-	coalescence(r,&noChrom, chromSample);
+	coalescent_pair pair;
+	getCoalPair(r,noChrom,&pair);
+	coalescence(pair,&noChrom, chromSample);
 	noCoal++;
       }
     else

@@ -287,30 +287,35 @@ void combineIdentAdjAncSegs(chromosome *ptrchr)
     }
 }
 
-void coalescence(gsl_rng * r, unsigned int* noChrom, chrsample* chrom)
+void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair)
 {
-
-  int chr1; 
-  int chr2;
-  if(*noChrom > 2)
+  if(noChrom > 2)
     {
-      chr1 = gsl_rng_uniform_int(r, *noChrom - 1);
-      chr2 = gsl_rng_uniform_int(r, *noChrom - 2);
-      if(chr2 >= chr1)
-	chr2++;
+      pair->chr1 = gsl_rng_uniform_int(r, noChrom - 1);
+      pair->chr2 = gsl_rng_uniform_int(r, noChrom - 2);
+      if(pair->chr2 >= pair->chr1)
+	pair->chr2++;
     }
   else
     {
-      chr1 = 0;
-      chr2 = 1;
+      pair->chr1 = 0;
+      pair->chr2 = 1;
     }
+
+
+}
+
+
+void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
+{
+
   *noChrom = *noChrom - 1;
   chromosome* tmp;
   chromosome* ptrchr1 = NULL;
   chromosome* ptrchr2 = NULL;
   chromosome* commonAnc = NULL;
-  ptrchr1 = getChrPtr(chr1, chrom);
-  ptrchr2 = getChrPtr(chr2, chrom);
+  ptrchr1 = getChrPtr(pair.chr1, chrom);
+  ptrchr2 = getChrPtr(pair.chr2, chrom);
   commonAnc = mergeChr(ptrchr1, ptrchr2);
   combineIdentAdjAncSegs(commonAnc);
   delete_chrom(ptrchr1,chrom);
