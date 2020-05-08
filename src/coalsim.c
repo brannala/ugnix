@@ -9,7 +9,7 @@ gsl_rng * r;
 /* options */
 int opt_help = 0; /* print help message */
 int opt_default = 0; /* print help message */
-
+int prn_chrom = 0; /* print chromosomes */
 char version[] = "coalsim";
 
 static void print_msg()
@@ -24,6 +24,7 @@ static void print_help()
 	 "-N <population size>\n"
 	 "-r <recombination rate>\n"
 	 "-s <seed for RNG>\n"
+	 "-d print chromosomes\n"
 	 "-m <mutation rate>\n");
 }
 
@@ -41,7 +42,7 @@ int main(int argc, char **argv)
   int c;
   const gsl_rng_type * T;
 
-  while((c = getopt(argc, argv, "c:N:r:m:s:h")) != -1)
+  while((c = getopt(argc, argv, "c:N:r:m:s:d:h")) != -1)
     switch(c)
       {
       case 'c':
@@ -58,6 +59,9 @@ int main(int argc, char **argv)
 	break;
       case 's':
 	RGSeed = strtoul(optarg,&endPtr,10);
+	break;
+      case 'd':
+	prn_chrom = 1;
 	break;
       case 'h':
 	opt_help = 1;
@@ -129,8 +133,8 @@ int main(int argc, char **argv)
     recProb = recRate*ancLength/totRate;
     assert(coalProb + recProb < 1.0);
     interArrivalTime = gsl_ran_exponential(r, 1.0/totRate);
-    if(!(eventNo % 5000))
-      printf("interArrivaltime: %lf totalTime: %lf NoMut: %d NoRec: %d NoCoal: %d\n",interArrivalTime,totalTime,noMutations,noRec,noCoal);
+    /*    if(!(eventNo % 5000))
+	  printf("interArrivaltime: %lf totalTime: %lf NoMut: %d NoRec: %d NoCoal: %d\n",interArrivalTime,totalTime,noMutations,noRec,noCoal); */
     
     totalTime += interArrivalTime;
     prob = gsl_rng_uniform_pos(r);
@@ -153,22 +157,28 @@ int main(int argc, char **argv)
       else
 	noMutations++;
   } 
-  printf("recNo: %d\n",noRec);
-  printf("mutNo: %d\n",noMutations);
-  currChr=0;
-  currentChrom = chromSample->chrHead; 
-  while(currentChrom != NULL)
+  printf("recNo: %d ",noRec);
+  printf("mutNo: %d ",noMutations);
+  printf("totalTime: %lf\n",totalTime);
+  
+  
+  if(prn_chrom)
     {
-      printf("\nChr: %d Anc: ",currChr);
-      tmp = currentChrom->anc;
-      while(tmp != NULL)
+      currChr=0;
+      currentChrom = chromSample->chrHead; 
+      while(currentChrom != NULL)
 	{
-	  displayBits(tmp->abits,noSamples);
-	  printf(" %lf ",tmp->position);  
-	  tmp = tmp->next;
-	} 
-      currentChrom = currentChrom->next;
-      currChr++;
+	  printf("\nChr: %d Anc: ",currChr);
+	  tmp = currentChrom->anc;
+	  while(tmp != NULL)
+	    {
+	      displayBits(tmp->abits,noSamples);
+	      printf(" %lf ",tmp->position);  
+	      tmp = tmp->next;
+	    } 
+	  currentChrom = currentChrom->next;
+	  currChr++;
+	}
     }
   delete_sample(chromSample->chrHead);
   free(chromSample); 
