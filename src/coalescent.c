@@ -317,7 +317,7 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
   ptrchr1 = getChrPtr(pair.chr1, chrom);
   ptrchr2 = getChrPtr(pair.chr2, chrom);
   commonAnc = mergeChr(ptrchr1, ptrchr2);
-  combineIdentAdjAncSegs(commonAnc);
+  //  combineIdentAdjAncSegs(commonAnc);
   delete_chrom(ptrchr1,chrom);
   delete_chrom(ptrchr2,chrom);
   if(*noChrom > 1)
@@ -356,7 +356,7 @@ int TestMRCAForAll(chrsample* chrom, unsigned int mrca)
       while(tmp_anc != NULL)
 	{
 	  if((tmp_anc->abits > 0)&&(tmp_anc->abits != mrca))
-	    return(0);
+	    return(0); // not all zeros or all ones therefore not mrca of sample
 	  tmp_anc = tmp_anc->next;
 	}
       currChrom = currChrom->next;
@@ -398,4 +398,190 @@ chrsample* create_sample(int noChrom)
 	}
     }
   return(chromSample);
+}
+
+void addMRCAInterval(struct mrca_list** head, double newlower,
+				  double newupper, double newage)
+{
+  struct mrca_list* current_intv;
+  struct mrca_list* last_intv=NULL;
+  struct mrca_list* new_intv;
+  struct mrca_list* current_head;
+  
+  current_intv = *head;
+  current_head = *head;
+  static int isFirst = 1;
+  int isHead = 1;
+  double smalldiff = 1e-6;
+  assert(newupper > newlower);
+  if(isFirst)
+    /* is first interval added to list */
+    {
+      new_intv = malloc(sizeof(struct mrca_list));
+      new_intv->lower_end = newlower;
+      new_intv->upper_end = newupper;
+      new_intv->age = newage;
+      new_intv->next = NULL;
+      current_head = new_intv;
+      *head = current_head;
+      isFirst = 0;
+      return;
+    }
+  while((current_intv->upper_end <= newlower)&&(current_intv->next != NULL))
+    /* find first overlapping interval */
+    {
+      last_intv = current_intv;
+      current_intv = current_intv->next;
+      isHead = 0;
+    }
+  /* deal with newlower */ 
+  if(newupper <= current_intv->lower_end)
+    {
+      if(isHead || last_intv->upper_end <= newlower)
+	{
+	  if(fabs(newupper - newlower) <= smalldiff)
+	    return;
+	}
+      else
+	{
+	  if(fabs(newupper - last_intv->upper_end) <= smalldiff)
+	    return;
+	}
+	  
+      new_intv = malloc(sizeof(struct mrca_list));
+      new_intv->age = newage;
+      new_intv->upper_end = newupper;
+      new_intv->next = current_intv;
+      if(isHead || last_intv->upper_end <= newlower)
+	  new_intv->lower_end = newlower;
+      else
+	  new_intv->lower_end = last_intv->upper_end;
+      if(isHead)
+	*head = new_intv;
+      else
+	last_intv->next = new_intv;
+      return;
+    }      
+  else
+    if((newlower <= current_intv->lower_end)&&
+       (newupper >= current_intv->lower_end))
+      {
+	if(isHead || last_intv->upper_end <= newlower)
+	  {
+	    if(fabs(current_intv->lower_end - newlower) <= smalldiff)
+	      return;
+	  }
+	else
+	  {
+	    if(fabs(current_intv->lower_end - last_intv->upper_end) <= smalldiff)
+	      return;
+	  }
+
+
+	new_intv = malloc(sizeof(struct mrca_list));
+	new_intv->upper_end = current_intv->lower_end;
+	new_intv->age = newage;
+	new_intv->next = current_intv;
+	if(isHead || last_intv->upper_end <= newlower)
+	  new_intv->lower_end = newlower;
+	else
+	  new_intv->lower_end = last_intv->upper_end;
+	if(isHead)
+	  *head = new_intv;
+	else
+	  last_intv->next = new_intv;
+	if(newupper <= current_intv->upper_end)
+	  return;
+      }
+    else
+      if(newlower >= current_intv->upper_end)
+	{
+	  new_intv = malloc(sizeof(struct mrca_list));
+	  new_intv->upper_end = newupper;
+	  new_intv->lower_end = newlower;
+	  new_intv->age = newage;
+	  new_intv->next = NULL;
+	  current_intv->next = new_intv;
+	  return;
+	}
+	else
+	  if((newlower >= current_intv->lower_end)&&(newupper >= current_intv->upper_end))
+	    return;
+  /* deal with newupper */
+  while(1)
+    {
+      if(newupper <= current_intv->upper_end)
+	return;
+      else
+	if((current_intv->next == NULL)||(current_intv->next->lower_end >= newupper))
+	  {
+	    new_intv = malloc(sizeof(struct mrca_list));
+	    new_intv->lower_end = current_intv->upper_end;
+	    new_intv->upper_end = newupper;
+	    new_intv->age = newage;
+	    if(current_intv->next == NULL)
+	      new_intv->next = NULL;
+	    else
+	      new_intv->next = current_intv->next;
+	    current_intv->next = new_intv;	    
+	    return;
+	  }
+	else
+	  {
+	    new_intv = malloc(sizeof(struct mrca_list));
+	    new_intv->lower_end = current_intv->upper_end;
+	    new_intv->upper_end = current_intv->next->lower_end;
+	    new_intv->age = newage;
+	    new_intv->next = current_intv->next;
+	    current_intv->next = new_intv;
+	    current_intv = new_intv->next;
+	  }
+    }
+}
+
+void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time)
+{
+  chromosome* currChrom = chrom->chrHead;
+  ancestry* tmp_anc; 
+  double lastPosition = 0;
+  double currLength = 0;
+  unsigned int foundPosition=0;
+  while((currChrom != NULL)&&(!foundPosition))
+    {
+      tmp_anc = currChrom->anc;
+      lastPosition=0;
+      double lastLength = currLength;
+      double nonAncestralLength=0;
+      while((tmp_anc != NULL)&&(!foundPosition))
+	{
+	  if(tmp_anc->abits)
+	      currLength += tmp_anc->position - lastPosition;
+	  else
+	    nonAncestralLength += tmp_anc->position - lastPosition;
+	  if(currLength > eventPos)
+	    {
+	      mutEv->location = eventPos + nonAncestralLength - lastLength;
+	      mutEv->age = time;
+	      mutEv->abits = tmp_anc->abits;
+	      foundPosition=1;
+	    }
+	  lastPosition = tmp_anc->position;
+	  tmp_anc = tmp_anc->next;
+	}
+      currChrom = currChrom->next;
+    }
+}
+
+long convertToBases(long totBases, int seqUnit, double value)
+{
+  if(seqUnit == 1)
+    return ceil(totBases*value);
+  else
+    if(seqUnit == 2)
+      return ceil(totBases*value/1000.0);
+    else
+      if(seqUnit == 3)
+	return ceil(totBases*value/1000000.0);
+      else
+	return -1;
 }

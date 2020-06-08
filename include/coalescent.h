@@ -3,6 +3,15 @@
 #include<gsl/gsl_rng.h>
 #include<gsl/gsl_randist.h>
 
+struct mutation
+{
+  double location;
+  unsigned int abits;
+  double age;
+  struct mutation* next;
+};
+typedef struct mutation mutation;
+
 struct ancestry
 {
   double position;
@@ -35,6 +44,20 @@ typedef struct
   int chr2;
 } coalescent_pair;
 
+struct mrca_list {
+  double lower_end;
+  double upper_end;
+  double age;
+  struct mrca_list* next;
+};
+
+struct mrca_summary {
+  double age;
+  double length;
+  int numInts;
+  struct mrca_summary* next;
+};
+
 chromosome* getChrPtr(int chr, chrsample* chrom);
 
 unsigned int unionAnc(unsigned int anc1, unsigned int anc2);
@@ -64,3 +87,10 @@ int TestMRCAForAll(chrsample* chrom, unsigned int mrca);
 chrsample* create_sample(int noChrom);
 
 void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair);
+
+void addMRCAInterval(struct mrca_list** head, double newlower,
+		     double newupper, double newage);
+
+void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time);
+
+long convertToBases(long totBases, int seqUnit, double value);
