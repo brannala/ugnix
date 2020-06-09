@@ -1,6 +1,11 @@
-#include "unity.h"
-#include "coalescent.h"
+#ifndef STDLIBS
+#define STDLIBS
+#include<uGnix.h>
+#include<coalescent.h>
+#include<unity.h>
+#endif
 
+char version[] = "test_coalescent";
 chromosome* tmp=NULL;
 chromosome* tmp2=NULL;
 chromosome* tmp3=NULL;

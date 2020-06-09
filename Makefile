@@ -40,8 +40,8 @@ test_ugnix.o: test_ugnix.c uGnix.h unity.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
 unity.o: unity.c unity.h unity_internals.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
-test_coalescent: test_coalescent.o coalescent.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas
-	$(CC) $(PROFILE) test_coalescent.o coalescent.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_coalescent
+test_coalescent: test_coalescent.o coalescent.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas
+	$(CC) $(PROFILE) test_coalescent.o coalescent.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_coalescent
 test_coalescent.o: test_coalescent.c coalescent.h uGnix.h unity.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
 runtests:

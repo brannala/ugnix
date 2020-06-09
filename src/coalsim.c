@@ -28,8 +28,10 @@ static void print_help()
 	 "-N <population size>\n"
 	 "-r <recombination rate>\n"
 	 "-s <seed for RNG>\n"
-	 "-d print chromosomes\n"
-	 "-a print MRCAs\n"
+	 "-u <specify scaling for bases: Mb Kb b>\n"
+	 "-a <output mrca information: r=regions i=intervals s=summary>\n"
+	 "-l <print detailed information about mutations>\n"
+	 "-d <print chromosomes>\n"
 	 "-m <mutation rate>\n");
 }
 
@@ -37,10 +39,10 @@ int main(int argc, char **argv)
 {
   fillheader(version);
   show_header();
-  double popSize = 10000;
-  double recRate = 0.1;
-  double mutRate = 3.0;
-  unsigned int noSamples=5;
+  double popSize = 1000;
+  double recRate = 0.05;
+  double mutRate = 0.5;
+  unsigned int noSamples=4;
   unsigned int RGSeed=0;
   char* endPtr;
   opterr = 0;
@@ -148,9 +150,7 @@ int main(int argc, char **argv)
   recombination_event recombEvent;
   chromosome* currentChrom = NULL;
   chrsample* chromSample = create_sample(noChrom);
-  ancestry* tmp = NULL;
   mutation* mutation_list = NULL;
-  int currChr=0;
   double ancLength=0;
   double eventLocation=0;
   double totalTime=0;
@@ -164,16 +164,12 @@ int main(int argc, char **argv)
   int noRec=0;
   int noCoal=0;
   struct mrca_list* head;
-  struct mrca_list* curr;
-  double newlower=0;
-  double newupper=0;
   struct mrca_summary* mrca_head = NULL;
   unsigned int mrca=0;
   for(unsigned int i=0; i <noSamples; i++)
     {
       mrca += ipow(2,i);
     }
-
   long chromTotBases = recRate*100*cMtoMb*1e6;
   char* baseUnit = malloc(sizeof(char)*5);
   if(seqUnits == 1)
@@ -186,6 +182,8 @@ int main(int argc, char **argv)
 	strcpy(baseUnit,"Mb");
       else
 	strcpy(baseUnit,"");
+
+  /* main simulation loop */
   int eventNo = 0;
   while((noChrom > 1) && (!TestMRCAForAll(chromSample, mrca)) )
   {
@@ -198,9 +196,6 @@ int main(int argc, char **argv)
     recProb = recRate*ancLength/totRate;
     assert(coalProb + recProb < 1.0);
     interArrivalTime = gsl_ran_exponential(r, 1.0/totRate);
-    /*    if(!(eventNo % 5000))
-	  printf("interArrivaltime: %lf totalTime: %lf NoMut: %d NoRec: %d NoCoal: %d\n",interArrivalTime,totalTime,noMutations,noRec,noCoal); */
-    
     totalTime += interArrivalTime;
     prob = gsl_rng_uniform_pos(r);
     if(prob <= coalProb)
@@ -210,41 +205,8 @@ int main(int argc, char **argv)
 	coalescent_pair pair;
 	getCoalPair(r,noChrom,&pair);
 	coalescence(pair,&noChrom, chromSample);
-
       	if(calc_mrca)
-	  {
-	    // collect information on intervals and ages of unique mrca's
-	    int firstInt=1;
-	    currentChrom = chromSample->chrHead; 
-	    while(currentChrom->next != NULL)
-	      currentChrom = currentChrom->next;
-	    tmp = currentChrom->anc;
-	    while((tmp->next != NULL)||firstInt)
-	      {
-		if(firstInt)
-		  {
-		    if(tmp->abits == mrca)
-		      {
-			newlower = 0.0;
-			newupper = tmp->position;
-			addMRCAInterval(&head,newlower,newupper,totalTime);
-		      }
-		    firstInt=0;
-		    if(tmp->next != NULL)
-		      tmp = tmp->next;
-		  }
-		else
-		  {
-		    if(tmp->next->abits == mrca)
-		      {
-			newlower = tmp->position;
-			newupper = tmp->next->position;
-			addMRCAInterval(&head,newlower,newupper,totalTime);
-		      }
-		    tmp = tmp->next;
-		  }
-	      } 
-	  } 
+	  getMRCAs(&head,currentChrom,chromSample,totalTime,mrca);
 	noCoal++;
       }
     else
@@ -278,201 +240,36 @@ int main(int argc, char **argv)
 	  noMutations++;
 	}
   }
+
+  /* summarize run input and output */
   printf("N:%.0f n:%d r:%.2f ",popSize,noSamples,recRate);
   printf("Mutation_Rate: %.2f/Chr",mutRate);
   if(seqUnits)
     printf(" %.3e/base",mutRate/chromTotBases);
   printf("\n");
-  printf("Chr_Length: %ld%s (Assumes %.2fcM/Mb)\n",
-  	 convertToBases(chromTotBases,seqUnits,1),baseUnit,cMtoMb);
+  if(seqUnits)
+    printf("Chr_Length: %ld%s (Assumes %.2fcM/Mb)\n",
+	   convertToBases(chromTotBases,seqUnits,1),baseUnit,cMtoMb);
   printf("No_Recombinations: %d ",noRec);
   printf("No_Mutations: %d ",noMutations);
   printf("No_Ancestral_Chromosomes: %d\n",noChrom);
   printf("Oldest_TMRCA: %.2lf ",totalTime);
   
+  if(calc_mrca)
+    MRCAStats(head,mrca_head,smalldiff,chromTotBases,seqUnits,baseUnit,prn_mrca,prn_regions);
+  else
+    printf("\n");
+
   if(prn_mutations)
     {
-      mutation* tmp1 = mutation_list;
-      while(tmp1 != NULL)
-	{
-	  if(tmp1->abits != mrca)
-	    {
-	      if(seqUnits)
-		printf("Location: %ld%s Age: %f Chrom: ",
-		       convertToBases(chromTotBases,seqUnits,tmp1->location),baseUnit,tmp1->age);
-	      else
-		printf("Location: %f Age: %f Chrom: ",
-		       tmp1->location,tmp1->age);
-	      displayBits(tmp1->abits,noSamples);
-	      printf("\n");
-	    }
-	  tmp1 = tmp1->next;	
-	}
+      printMutations(mutation_list,chromTotBases,seqUnits,baseUnit,noSamples,mrca);
     }
   
-  if(calc_mrca)
-    {
-
-      curr=head;
-      int firstEntry=1;
-      while(curr != NULL)
-	{
-	  struct mrca_summary* curr_sum;
-	  struct mrca_summary* last_sum;
-	  struct mrca_summary* tmp;
-	  int isHead=1;
-	  curr_sum = mrca_head;
-	  while((curr_sum != NULL)&&(curr_sum->age < curr->age))
-	    {
-	      last_sum = curr_sum;
-	      curr_sum = curr_sum->next;
-	      isHead = 0;
-	    }
-	  if(curr_sum == NULL)
-	    {
-	      if(firstEntry)
-		{
-		  curr_sum = malloc(sizeof(struct mrca_summary));
-		  curr_sum->age = curr->age;
-		  curr_sum->length = curr->upper_end - curr->lower_end;
-		  curr_sum->numInts = 1;
-		  curr_sum->next = NULL;
-		  mrca_head = curr_sum;
-		  firstEntry = 0;
-		  curr = curr->next;
-		  continue;
-		}
-	      else
-		{
-		  last_sum->next = malloc(sizeof(struct mrca_summary));
-		  last_sum->next->age = curr->age;
-		  last_sum->next->length = curr->upper_end - curr->lower_end;
-		  last_sum->next->numInts = 1;
-		  last_sum->next->next = NULL;
-		  curr = curr->next;
-		  continue;
-		}
-	    }
-	  if(fabs(curr_sum->age - curr->age) < smalldiff)
-	    {
-	      curr_sum->numInts++;
-	      curr_sum->length += curr->upper_end - curr->lower_end;
-	      curr = curr->next;
-	      continue;
-	    }
-	  else
-	    {
-	      tmp = malloc(sizeof(struct mrca_summary));
-	      tmp->age = curr->age;
-	      tmp->length = curr->upper_end - curr->lower_end;
-	      tmp->numInts = 1;
-	      tmp->next = curr_sum;
-	      if(isHead)
-		mrca_head = tmp;
-	      else
-		last_sum->next = tmp;
-	    }
-	   curr = curr->next;
-	}
-
-      struct mrca_summary* curr_sum;
-      double mean_tmrca=0;
-      double sumsqr=0;
-      double v2=0;
-      int no_segs=0;
-      double largest_mrca=0;
-      double smallest_mrca=1e9;
-      double youngest_mrca=1e9;
-      curr_sum = mrca_head;
-      /* calculate mean and var of tmrca across segments */
-      while(curr_sum != NULL)
-	{
-	  no_segs++;
-	  mean_tmrca += curr_sum->age;
-	  if(largest_mrca < curr_sum->length)
-	    largest_mrca = curr_sum->length;
-	  if(smallest_mrca > curr_sum->length)
-	    smallest_mrca = curr_sum->length;
-	  if(youngest_mrca > curr_sum->age)
-	     youngest_mrca = curr_sum->age;
-	  curr_sum = curr_sum->next;
-	}
-      curr_sum = mrca_head;
-      no_segs=0;
-      while(curr_sum != NULL)
-	{
-	  no_segs++;
-	  sumsqr += (curr_sum->age - mean_tmrca)*(curr_sum->age - mean_tmrca);
-	  v2 = (1.0/no_segs)*(curr_sum->age - mean_tmrca)*(curr_sum->age - mean_tmrca) + ((no_segs-1.0)/no_segs)*v2;
-	  curr_sum = curr_sum->next;
-	}
-      printf("Youngest_TMRCA: %.2f ",youngest_mrca);
-      printf("Avg_TMRCA: %.2f\n",mean_tmrca/no_segs);
-      printf("No_MRCAs: %d ",no_segs);
-
-      if(seqUnits)
-	printf("Largest_MRCA: %ld%s ",
-	       convertToBases(chromTotBases,seqUnits,largest_mrca),baseUnit);
-      else
-      printf("Largest_MRCA: %.2f ",largest_mrca);
-      if(seqUnits)
-	printf("Smallest_MRCA: %ld%s.\n",
-	       convertToBases(chromTotBases,seqUnits,smallest_mrca),baseUnit);
-      else
-      printf("Smallest_MRCA: %.2f.\n",smallest_mrca);
-
-
-
-      // printf("SE[Mean(TMRCA)]: %f",sqrt(sumsqr/no_segs)/sqrt(no_segs*1.0));
-      // printf("SE[V2]: %f\n\n",sqrt(v2)/sqrt(no_segs*1.0));
-      if(prn_mrca)
-	{
-	  printf("TMRCA Summary\n");
-	  printf("-----------------------------\n\n");	
-	  curr_sum = mrca_head;
-	  while(curr_sum != NULL)
-	    {
-	      if(seqUnits)
-		printf("Length: %ld%s tmrca: %f\n",
-		       convertToBases(chromTotBases,seqUnits,curr_sum->length),baseUnit,curr_sum->age);
-	      else
-		printf("Length: %f tmrca: %f\n, ", curr_sum->length, curr_sum->age);
-	      curr_sum = curr_sum->next;
-	    }
-	}
-      if(prn_regions)
-	{
-	  printf("\nTMRCAs for chromosome regions\n");
-	  printf("-----------------------------\n\n");	
-	  curr=head;
-	  while(curr != NULL)
-	    {
-	      printf("(%f, ", curr->lower_end);
-	      printf("%f) ", curr->upper_end);
-	      printf(" tmrca: %f\n",curr->age);
-	      curr = curr->next;
-	    }
-	}
-    }
-    
   if(prn_chrom)
     {
-      currChr=0;
-      currentChrom = chromSample->chrHead; 
-      while(currentChrom != NULL)
-	{
-	  printf("\nChr: %d Anc: ",currChr);
-	  tmp = currentChrom->anc;
-	  while(tmp != NULL)
-	    {
-	      displayBits(tmp->abits,noSamples);
-	      printf(" %lf ",tmp->position);  
-	      tmp = tmp->next;
-	    } 
-	  currentChrom = currentChrom->next;
-	  currChr++;
-	}
+      printChromosomes(chromSample,noSamples);
     }
+  
   delete_sample(chromSample->chrHead);
   free(chromSample); 
 }

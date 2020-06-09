@@ -91,6 +91,16 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair);
 void addMRCAInterval(struct mrca_list** head, double newlower,
 		     double newupper, double newage);
 
+void getMRCAs(struct mrca_list** head, chromosome* currentChrom, chrsample* chromSample, double totalTime, unsigned int mrca);
+
+void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double smalldiff, long chromTotBases,
+		  int seqUnits, char* baseUnit, int prn_mrca, int prn_regions);
+
 void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time);
+
+void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
+		    char* baseUnit, unsigned int noSamples, unsigned int mrca);
+
+void printChromosomes(chrsample* chromSample, unsigned int noSamples);
 
 long convertToBases(long totBases, int seqUnit, double value);
