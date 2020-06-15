@@ -4,6 +4,8 @@
 #include<coalescent.h>
 #endif
 
+FILE *out_file;
+
 gsl_rng * r;
 
 /* options */
@@ -14,6 +16,7 @@ int prn_mrca = 0; /* print MRCAs */
 int prn_mutations = 0; /* print mutations */
 int prn_regions = 0; /* print all mrca regions */
 int calc_mrca = 0; /* do mrca calculations */
+int prn_sequences = 0; /* print sequence data to output file */
 char version[] = "coalsim";
 
 static void print_msg()
@@ -30,6 +33,7 @@ static void print_help()
 	 "-s <seed for RNG>\n"
 	 "-u <specify scaling for bases: Mb Kb b>\n"
 	 "-a <output mrca information: r=regions i=intervals s=summary>\n"
+	 "-o <sequence output file name>\n"
 	 "-l <print detailed information about mutations>\n"
 	 "-d <print chromosomes>\n"
 	 "-m <mutation rate>\n");
@@ -42,6 +46,7 @@ int main(int argc, char **argv)
   double popSize = 1000;
   double recRate = 0.05;
   double mutRate = 0.5;
+  char* outfile = malloc(sizeof(char)*30);
   unsigned int noSamples=4;
   unsigned int RGSeed=0;
   char* endPtr;
@@ -50,8 +55,9 @@ int main(int argc, char **argv)
   int seqUnits = 0;
   double cMtoMb = 1.0;
   const gsl_rng_type * T;
+  
 
-  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:dlh")) != -1)
+  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:dlh")) != -1)
     switch(c)
       {
       case 'c':
@@ -107,6 +113,16 @@ int main(int argc, char **argv)
 		return 1;
 	      }
 	break;
+      case 'o':
+	prn_sequences = 1;
+	strncpy(outfile,optarg,30);
+	out_file = fopen(outfile,"w");
+	if(out_file == NULL)
+	  {
+	    fprintf(stderr, "Error: failed to open output file %s\n",outfile);
+	    exit(1);
+	  }
+	break;
       case 'd':
 	prn_chrom = 1;
 	break;
@@ -148,14 +164,13 @@ int main(int argc, char **argv)
 
   unsigned int noChrom = noSamples;
   recombination_event recombEvent;
-  chromosome* currentChrom = NULL;
   chrsample* chromSample = create_sample(noChrom);
   mutation* mutation_list = NULL;
+  char** sequences;
   double ancLength=0;
   double eventLocation=0;
   double totalTime=0;
   double interArrivalTime=0;
-  currentChrom = chromSample->chrHead;
   double totRate=0;
   double coalProb = 0;
   double recProb = 0;
@@ -163,7 +178,7 @@ int main(int argc, char **argv)
   int noMutations=0;
   int noRec=0;
   int noCoal=0;
-  struct mrca_list* head;
+  struct mrca_list* head = NULL;
   struct mrca_summary* mrca_head = NULL;
   unsigned int mrca=0;
   for(unsigned int i=0; i <noSamples; i++)
@@ -206,7 +221,7 @@ int main(int argc, char **argv)
 	getCoalPair(r,noChrom,&pair);
 	coalescence(pair,&noChrom, chromSample);
       	if(calc_mrca)
-	  getMRCAs(&head,currentChrom,chromSample,totalTime,mrca);
+	  getMRCAs(&head,chromSample,totalTime,mrca);
 	noCoal++;
       }
     else
@@ -243,7 +258,7 @@ int main(int argc, char **argv)
 
   /* summarize run input and output */
   printf("N:%.0f n:%d r:%.2f ",popSize,noSamples,recRate);
-  printf("Mutation_Rate: %.2f/Chr",mutRate);
+  printf("Mutation_Rate: %.3e/Chr",mutRate);
   if(seqUnits)
     printf(" %.3e/base",mutRate/chromTotBases);
   printf("\n");
@@ -264,6 +279,18 @@ int main(int argc, char **argv)
     {
       printMutations(mutation_list,chromTotBases,seqUnits,baseUnit,noSamples,mrca);
     }
+
+  if(prn_sequences)
+    {
+      sequences = simulateSequences(mutation_list,chromTotBases,noSamples,r);
+      for(int i=0; i<noSamples; i++)
+	{
+	  fprintf(out_file,">sample%d\n",i);
+	  for(int j=0; j<chromTotBases; j++)
+	    fprintf(out_file,"%c",sequences[i][j]);
+	  fprintf(out_file,"\n");
+	}
+    }
   
   if(prn_chrom)
     {
@@ -272,5 +299,34 @@ int main(int argc, char **argv)
   
   delete_sample(chromSample->chrHead);
   free(chromSample); 
+  free(baseUnit);
+  free(outfile);
+  mutation* mcurr = mutation_list;
+  while(mutation_list != NULL)
+    {
+      mcurr = mutation_list;
+      mutation_list = mutation_list->next;
+      free(mcurr);
+    }
+  struct mrca_list* hcurr = head;
+  if(calc_mrca)
+    {
+      while(head != NULL)
+	{
+	  hcurr = head;
+	  head = head->next;
+	  free(hcurr);
+	}
+      struct mrca_summary* mhcurr = mrca_head;
+      while(mrca_head != NULL)
+	{
+	  mhcurr = mrca_head;
+	  mrca_head = mrca_head->next;
+	  free(mhcurr);
+	}
+    }
+
+  if(out_file != NULL)
+    fclose(out_file);
 }
 

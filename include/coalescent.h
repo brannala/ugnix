@@ -3,6 +3,9 @@
 #include<gsl/gsl_rng.h>
 #include<gsl/gsl_randist.h>
 
+#define POS2BASE(X,Y) (long)(ceil((X)*(Y))-1) /* convert POS X in (0,1) to BASE position 
+				   in sequence of length Y */
+
 struct mutation
 {
   double location;
@@ -91,7 +94,7 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair);
 void addMRCAInterval(struct mrca_list** head, double newlower,
 		     double newupper, double newage);
 
-void getMRCAs(struct mrca_list** head, chromosome* currentChrom, chrsample* chromSample, double totalTime, unsigned int mrca);
+void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime, unsigned int mrca);
 
 void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double smalldiff, long chromTotBases,
 		  int seqUnits, char* baseUnit, int prn_mrca, int prn_regions);
@@ -104,3 +107,9 @@ void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
 void printChromosomes(chrsample* chromSample, unsigned int noSamples);
 
 long convertToBases(long totBases, int seqUnit, double value);
+
+char** simulateSequences(mutation* mutation_list, int totBases, int noSamples, gsl_rng * r);
+
+char JC69RBase(gsl_rng * r, char currBase);
+
+void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);

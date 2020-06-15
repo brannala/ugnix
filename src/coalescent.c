@@ -406,144 +406,70 @@ void addMRCAInterval(struct mrca_list** head, double newlower,
   struct mrca_list* current_intv;
   struct mrca_list* last_intv=NULL;
   struct mrca_list* new_intv;
-  struct mrca_list* current_head;
-  
-  current_intv = *head;
-  current_head = *head;
-  static int isFirst = 1;
   int isHead = 1;
-  double smalldiff = 1e-6;
+  // double smalldiff = 1e-8;
+  double currNewlower = newlower;
   assert(newupper > newlower);
-  if(isFirst)
-    /* is first interval added to list */
-    {
-      new_intv = malloc(sizeof(struct mrca_list));
-      new_intv->lower_end = newlower;
-      new_intv->upper_end = newupper;
-      new_intv->age = newage;
-      new_intv->next = NULL;
-      current_head = new_intv;
-      *head = current_head;
-      isFirst = 0;
-      return;
-    }
-  while((current_intv->upper_end <= newlower)&&(current_intv->next != NULL))
-    /* find first overlapping interval */
-    {
+  current_intv = *head;
+  while((current_intv != NULL)&&(current_intv->upper_end <= newlower) /* &&(current_intv->next != NULL) */)
+    /* ! new           L-----U
+       ! curr L-----U                   */
+    /* found first overlapping interval */
+     {
       last_intv = current_intv;
       current_intv = current_intv->next;
       isHead = 0;
     }
-  /* deal with newlower */ 
-  if(newupper <= current_intv->lower_end)
-    {
-      if(isHead || last_intv->upper_end <= newlower)
-	{
-	  if(fabs(newupper - newlower) <= smalldiff)
-	    return;
-	}
-      else
-	{
-	  if(fabs(newupper - last_intv->upper_end) <= smalldiff)
-	    return;
-	}
-	  
-      new_intv = malloc(sizeof(struct mrca_list));
-      new_intv->age = newage;
-      new_intv->upper_end = newupper;
-      new_intv->next = current_intv;
-      if(isHead || last_intv->upper_end <= newlower)
-	  new_intv->lower_end = newlower;
-      else
-	  new_intv->lower_end = last_intv->upper_end;
-      if(isHead)
-	*head = new_intv;
-      else
-	last_intv->next = new_intv;
-      return;
-    }      
-  else
-    if((newlower <= current_intv->lower_end)&&
-       (newupper >= current_intv->lower_end))
-      {
-	if(isHead || last_intv->upper_end <= newlower)
-	  {
-	    if(fabs(current_intv->lower_end - newlower) <= smalldiff)
-	      return;
-	  }
-	else
-	  {
-	    if(fabs(current_intv->lower_end - last_intv->upper_end) <= smalldiff)
-	      return;
-	  }
-
-
-	new_intv = malloc(sizeof(struct mrca_list));
-	new_intv->upper_end = current_intv->lower_end;
-	new_intv->age = newage;
-	new_intv->next = current_intv;
-	if(isHead || last_intv->upper_end <= newlower)
-	  new_intv->lower_end = newlower;
-	else
-	  new_intv->lower_end = last_intv->upper_end;
-	if(isHead)
-	  *head = new_intv;
-	else
-	  last_intv->next = new_intv;
-	if(newupper <= current_intv->upper_end)
-	  return;
-      }
-    else
-      if(newlower >= current_intv->upper_end)
-	{
-	  new_intv = malloc(sizeof(struct mrca_list));
-	  new_intv->upper_end = newupper;
-	  new_intv->lower_end = newlower;
-	  new_intv->age = newage;
-	  new_intv->next = NULL;
-	  current_intv->next = new_intv;
-	  return;
-	}
-	else
-	  if((newlower >= current_intv->lower_end)&&(newupper >= current_intv->upper_end))
-	    return;
-  /* deal with newupper */
+  
   while(1)
     {
+      if((current_intv == NULL)||(newupper <= current_intv->lower_end))
+	/* new L------U           OR        new   L-------U
+	   curr         L------U      last L------U          */    
+	{
+	  new_intv = malloc(sizeof(struct mrca_list));
+	  new_intv->age = newage;
+	  new_intv->lower_end = currNewlower;
+	  new_intv->upper_end = newupper;
+	  new_intv->next = current_intv;
+	  if(isHead)
+	    *head = new_intv;
+	  else
+	    last_intv->next = new_intv;
+	  return;
+	}
+      else
+	if(currNewlower < current_intv->lower_end)
+	  /* new L----->
+             curr   L-----U */
+	  {
+	    new_intv = malloc(sizeof(struct mrca_list));
+	    new_intv->age = newage;
+	    new_intv->lower_end = currNewlower;
+	    new_intv->upper_end = current_intv->lower_end;
+	    new_intv->next = current_intv;
+	    if(isHead)
+	      *head = new_intv;
+	    else
+	      last_intv->next = new_intv;
+	  }
       if(newupper <= current_intv->upper_end)
 	return;
       else
-	if((current_intv->next == NULL)||(current_intv->next->lower_end >= newupper))
-	  {
-	    new_intv = malloc(sizeof(struct mrca_list));
-	    new_intv->lower_end = current_intv->upper_end;
-	    new_intv->upper_end = newupper;
-	    new_intv->age = newage;
-	    if(current_intv->next == NULL)
-	      new_intv->next = NULL;
-	    else
-	      new_intv->next = current_intv->next;
-	    current_intv->next = new_intv;	    
-	    return;
-	  }
-	else
-	  {
-	    new_intv = malloc(sizeof(struct mrca_list));
-	    new_intv->lower_end = current_intv->upper_end;
-	    new_intv->upper_end = current_intv->next->lower_end;
-	    new_intv->age = newage;
-	    new_intv->next = current_intv->next;
-	    current_intv->next = new_intv;
-	    current_intv = new_intv->next;
-	  }
+	if(currNewlower <= current_intv->upper_end)
+	  currNewlower = current_intv->upper_end;
+      last_intv = current_intv;
+      current_intv = current_intv->next;
     }
-}
+} 
+ 
 
-void getMRCAs(struct mrca_list** head, chromosome* currentChrom, chrsample* chromSample, double totalTime, unsigned int mrca)
+void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime, unsigned int mrca)
 {
   double newlower=0;
   double newupper=0;
   ancestry* tmp = NULL;
+  chromosome* currentChrom;
   // collect information on intervals and ages of unique mrca's
   int firstInt=1;
   currentChrom = chromSample->chrHead; 
@@ -561,8 +487,8 @@ void getMRCAs(struct mrca_list** head, chromosome* currentChrom, chrsample* chro
 	      addMRCAInterval(head,newlower,newupper,totalTime);
 	    }
 	  firstInt=0;
-	  if(tmp->next != NULL)
-	    tmp = tmp->next;
+	  //  if(tmp->next != NULL)
+	  //  tmp = tmp->next;
 	}
       else
 	{
@@ -582,6 +508,8 @@ void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double sm
 {
   struct mrca_list* curr;
   struct mrca_summary* curr_sum;
+  struct mrca_summary* last_sum;
+  struct mrca_summary* tmp;
   double mean_tmrca=0;
   int no_segs=0;
   double largest_mrca=0;
@@ -592,9 +520,6 @@ void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double sm
   int firstEntry=1;
   while(curr != NULL)
     {
-      struct mrca_summary* curr_sum;
-      struct mrca_summary* last_sum;
-      struct mrca_summary* tmp;
       int isHead=1;
       curr_sum = mrca_head;
       while((curr_sum != NULL)&&(curr_sum->age < curr->age))
@@ -690,7 +615,7 @@ void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double sm
 	    printf("Length: %ld%s tmrca: %f\n",
 		   convertToBases(chromTotBases,seqUnits,curr_sum->length),baseUnit,curr_sum->age);
 	  else
-	    printf("Length: %f tmrca: %f\n, ", curr_sum->length, curr_sum->age);
+	    printf("Length: %f tmrca: %f\n", curr_sum->length, curr_sum->age);
 	  curr_sum = curr_sum->next;
 	}
     }
@@ -772,18 +697,14 @@ void printChromosomes(chrsample* chromSample, unsigned int noSamples)
   currentChrom = chromSample->chrHead;
   while(currentChrom != NULL)
     {
-      int firstInt=1;
-      unsigned int last;
       printf("\nChr: %d: \n",currChr);
       tmp = currentChrom->anc;
       while(tmp != NULL)
 	{
-	  if(firstInt || (last != tmp->abits))
-	    {
-	      last = tmp->abits;
+	  if((tmp->next == NULL) || (tmp->next->abits != tmp->abits))
+	    { 
 	      displayBits(tmp->abits,noSamples);
 	      printf(" %lf \n",tmp->position);  
-	      firstInt = 0;
 	      tmp = tmp->next;
 	    }
 	  else
@@ -806,4 +727,77 @@ long convertToBases(long totBases, int seqUnit, double value)
 	return ceil(totBases*value/1000000.0);
       else
 	return -1;
+}
+
+char JC69RBase(gsl_rng * r, char currBase)
+{
+  char bases[4] = {'a','c','g','t'};
+  char bases_a[3] = {'c','g','t'};
+  char bases_c[3] = {'a','g','t'};
+  char bases_g[3] = {'a','c','t'};
+  char bases_t[3] = {'a','c','g'};
+
+  if(currBase == 'n')
+    return(bases[gsl_rng_uniform_int(r, 4)]);
+  else
+    if(currBase == 'a')
+      return(bases_a[gsl_rng_uniform_int(r, 3)]);
+    else
+      if(currBase == 'c')
+	return(bases_c[gsl_rng_uniform_int(r, 3)]);
+      else
+	if(currBase == 'g')
+	  return(bases_g[gsl_rng_uniform_int(r, 3)]);
+	else
+	  if(currBase == 't')
+	    return(bases_t[gsl_rng_uniform_int(r, 3)]);
+	  else
+	    {
+	      fprintf(stderr,"Error: base %c unknown!",currBase);
+	      exit(1);
+	    }
+}
+
+void getBits(unsigned int value, unsigned int noSamples, unsigned int* result)
+{
+  unsigned int c;
+  unsigned int displaymask = 1 << (noSamples - 1);
+
+  for(c=1; c <= noSamples; ++c)
+    {
+      result[c] = value & displaymask ? 1 : 0;
+      value <<= 1;
+    }
+}
+
+char** simulateSequences(mutation* mutation_list, int totBases, int noSamples, gsl_rng * r)
+{
+  unsigned int* ancPops = (unsigned int*) malloc(sizeof(unsigned int)*(noSamples+1));
+  char** sequences = malloc(sizeof(char*)*noSamples);
+  mutation* curr_mutList;
+  long currPos=0;
+  char newBase;
+  
+  curr_mutList = mutation_list;
+  for(int i=0; i<noSamples; i++)
+    sequences[i] = (char*)malloc(sizeof(char)*totBases);
+  /* generate base sequences */
+  for(int i=0; i<noSamples; i++)
+    for(int j=0; j<totBases; j++)
+      if(i==0)
+	sequences[i][j] = JC69RBase(r,'n');
+      else
+	sequences[i][j] = sequences[0][j];
+  /* add mutations */
+  while(curr_mutList != NULL)
+    {
+      currPos = POS2BASE(totBases,curr_mutList->location);
+      getBits(curr_mutList->abits,noSamples,ancPops);
+      newBase = JC69RBase(r,sequences[1][currPos]);
+      for(int i=1; i <= noSamples; i++)
+	  if(ancPops[i])
+	      sequences[i-1][currPos] = newBase;
+      curr_mutList = curr_mutList->next;
+    }
+  return sequences;
 }

@@ -89,10 +89,6 @@ void displayBits(unsigned int value, unsigned int noSamples)
   //  putchar( '\n' );
 }
 
-
-
-
-
 /* string cmp function for use by qsort */
 
 int cstring_cmp(const void *a, const void *b) 
