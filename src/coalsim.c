@@ -165,6 +165,7 @@ int main(int argc, char **argv)
   unsigned int noChrom = noSamples;
   recombination_event recombEvent;
   chrsample* chromSample = create_sample(noChrom);
+  struct coalescent_events* coalescent_list = NULL;
   mutation* mutation_list = NULL;
   char** sequences;
   double ancLength=0;
@@ -220,10 +221,33 @@ int main(int argc, char **argv)
 	coalescent_pair pair;
 	getCoalPair(r,noChrom,&pair);
 	coalescence(pair,&noChrom, chromSample);
+	struct coalescent_events* tmpCList;
+	if(coalescent_list == NULL)
+	  {
+	   coalescent_list = malloc(sizeof(struct coalescent_events));
+	   tmpCList = coalescent_list;
+	  }
+	else
+	  {
+	    tmpCList = coalescent_list;
+	    while(tmpCList->next != NULL)
+	      tmpCList = tmpCList->next;
+	    tmpCList->next = malloc(sizeof(struct coalescent_events));
+	    tmpCList = tmpCList->next;
+	  }
+	chromosome* tmpc;
+	tmpc = chromSample->chrHead;
+	while(tmpc->next != NULL)
+	  tmpc = tmpc->next;
+	tmpCList->chr = copy_chrom(tmpc);
+	combineIdentAdjAncSegs(tmpCList->chr);
+	tmpCList->time = totalTime;
+	tmpCList->next = NULL; 
       	if(calc_mrca)
 	  getMRCAs(&head,chromSample,totalTime,mrca);
 	noCoal++;
-      }
+
+      } 
     else
       if(prob <= (coalProb + recProb))
 	/* recombination event */
@@ -269,6 +293,43 @@ int main(int argc, char **argv)
   printf("No_Mutations: %d ",noMutations);
   printf("No_Ancestral_Chromosomes: %d\n",noChrom);
   printf("Oldest_TMRCA: %.2lf ",totalTime);
+
+  /* debugging code */
+  int coalcnt=0;
+  struct coalescent_events* tmpCL;
+  tmpCL = coalescent_list;
+  printf("\n");
+  while(tmpCL != NULL)
+    {
+      ancestry* tmpa;
+      coalcnt++;
+      printf("Coalescent: %d Time: %f\n",coalcnt,tmpCL->time);
+      tmpa = tmpCL->chr->anc;
+      while(tmpa != NULL)
+	{
+	  printf("pos: %f ",tmpa->position);
+	  displayBits(tmpa->abits,noSamples);
+	  printf(" isSingleton: %d",isSingleton(tmpa->abits));
+	    printf("\n");
+	  tmpa = tmpa->next;
+	}
+      tmpCL = tmpCL->next;
+    }
+  struct mrca_list* tmp_mrca_list = head;
+  while(tmp_mrca_list != NULL)
+    {
+      struct geneTree* g1 = getGeneTree(tmp_mrca_list->lower_end, tmp_mrca_list->upper_end,coalescent_list);
+      while(g1 != NULL)
+	{
+	  printf("time: %f anc (/2N)",g1->time/(2.0*popSize));
+	  displayBits(g1->abits,noSamples);
+	  printf("\n");
+	  g1 = g1->next;
+	}
+      tmp_mrca_list = tmp_mrca_list->next;
+    }
+
+
   
   if(calc_mrca)
     MRCAStats(head,mrca_head,smalldiff,chromTotBases,seqUnits,baseUnit,prn_mrca,prn_regions);

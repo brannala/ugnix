@@ -47,6 +47,18 @@ typedef struct
   int chr2;
 } coalescent_pair;
 
+struct coalescent_events {
+  chromosome* chr;
+  double time;
+  struct coalescent_events* next;
+};
+
+struct geneTree {
+  unsigned int abits;
+  double time;
+  struct geneTree* next;
+};
+
 struct mrca_list {
   double lower_end;
   double upper_end;
@@ -65,6 +77,8 @@ chromosome* getChrPtr(int chr, chrsample* chrom);
 
 unsigned int unionAnc(unsigned int anc1, unsigned int anc2);
 
+chromosome* copy_chrom(chromosome* sourceChr);
+
 void delete_anc(ancestry* head);
 
 void delete_chrom(chromosome* chrptr, chrsample* chrom);
@@ -82,6 +96,8 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2);
 void combineIdentAdjAncSegs(chromosome *ptrchr);
 
 void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom);
+
+struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list);
 
 unsigned long long int ipow( unsigned long long int base, int exp);
 
@@ -113,3 +129,5 @@ char** simulateSequences(mutation* mutation_list, int totBases, int noSamples, g
 char JC69RBase(gsl_rng * r, char currBase);
 
 void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);
+
+int isSingleton(unsigned int x);

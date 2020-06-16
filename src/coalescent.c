@@ -4,6 +4,21 @@
 #include<coalescent.h>
 #endif
 
+int isSingleton(unsigned int x)
+{
+  if(x == 1)
+    return 1;
+  else
+    {
+      unsigned int z=1;
+      while(z < 1073741825)
+	if(x == (z*=2))
+	  return 1;
+    }
+  return 0;
+}
+
+
 chromosome* getChrPtr(int chr, chrsample* chrom)
 {
   chromosome* tmp = chrom->chrHead;
@@ -22,6 +37,34 @@ chromosome* getChrPtr(int chr, chrsample* chrom)
 unsigned int unionAnc(unsigned int anc1, unsigned int anc2)
 {
   return(anc1 | anc2);
+}
+
+chromosome* copy_chrom(chromosome* sourceChr)
+{
+  chromosome* newChr;
+  ancestry* currNew;
+  ancestry* currOld;
+  newChr = malloc(sizeof(chromosome));
+  newChr->next = NULL;
+  currOld = sourceChr->anc;
+  newChr->anc = malloc(sizeof(ancestry));
+  int firstAnc=1;
+  currNew = newChr->anc;
+  while(currOld != NULL)
+    {
+      if(!firstAnc)
+	{
+	  currNew->next = malloc(sizeof(ancestry));
+	  currNew = currNew->next;
+	}
+      firstAnc = 0;
+      currNew->position = currOld->position;
+      currNew->abits = currOld->abits;
+      currOld = currOld->next;
+      
+    }
+  currNew->next = NULL;
+  return newChr;
 }
 
 void delete_anc(ancestry* head)
@@ -282,8 +325,9 @@ void combineIdentAdjAncSegs(chromosome *ptrchr)
 	  tmp->next = tmp->next->next;
 	  free(tmp_del);
 	}
-      if(tmp->next != NULL)
-	tmp = tmp->next;
+      else
+	if(tmp->next != NULL)
+	  tmp = tmp->next;
     }
 }
 
@@ -304,7 +348,6 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair)
 
 
 }
-
 
 void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
 {
@@ -345,6 +388,59 @@ unsigned long long int ipow( unsigned long long int base, int exp)
     }
   return result;
 }
+
+struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list)
+{
+  struct geneTree* geneT = NULL;
+  struct geneTree* currGT = NULL;
+  struct coalescent_events* localCL=coalescent_list;
+  ancestry* localAnc;
+  while(localCL != NULL)
+    {
+      localAnc = localCL->chr->anc;
+      double lastPos=0.0;
+      int foundAnc=0;
+      while((localAnc != NULL) && !foundAnc)
+	{
+	  if(!(isSingleton(localAnc->abits) || localAnc->abits == 0))
+	    {
+	      if((upper <= localAnc->position)&&(lower >= lastPos))
+		{
+		  struct geneTree* tmpGT = geneT;
+		  while((tmpGT != NULL) && !foundAnc)
+		    {
+		      if(tmpGT->abits == localAnc->abits)
+			foundAnc=1;
+		      tmpGT = tmpGT->next;
+		    }
+		  if(!foundAnc)
+		    {
+		      if(geneT == NULL)
+			{
+			  geneT = malloc(sizeof(struct geneTree));
+			  geneT->next = NULL;
+			  currGT = geneT;
+			}
+		      else
+			{
+			  currGT->next = malloc(sizeof(struct geneTree));
+			  currGT = currGT->next;
+			  currGT->next = NULL;
+			}
+		      currGT->abits = localAnc->abits;
+		      currGT->time = localCL->time;
+		      foundAnc = 1;
+		    }
+		}
+	    }
+	  lastPos = localAnc->position;
+	  localAnc = localAnc->next;
+	}
+      localCL = localCL->next;
+    }
+  return geneT;
+}
+
 
 int TestMRCAForAll(chrsample* chrom, unsigned int mrca)
 {
