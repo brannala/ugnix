@@ -329,7 +329,7 @@ int main(int argc, char **argv)
 	  fillTips(t1);
 	  printf("(%f, ", tmp_mrca_list->lower_end);
 	  printf("%f) ", tmp_mrca_list->upper_end);
-	  printTree(t1);
+	  printTree(t1,noSamples);
 	  printf("\n");
 	  g2=g1;
 	  g1 = g1->next;

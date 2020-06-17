@@ -598,23 +598,23 @@ unsigned int binaryToChrLabel(unsigned int x, int noSamples)
 
 }
 
-void printTree(struct tree* lroot)
+void printTree(struct tree* lroot, int noSamples)
 {
   if(lroot->left != NULL)
     {
       printf("(");
-      printTree(lroot->left);
+      printTree(lroot->left,noSamples);
       if(lroot->left->left == NULL)
 	printf(",");
     }
   if(lroot->right != NULL)
     {
-      printTree(lroot->right);
+      printTree(lroot->right,noSamples);
       printf(")");
       printf(":%.2f",lroot->time);
     }
   if(lroot->left == NULL)
-    printf("%d",binaryToChrLabel(lroot->abits,10));
+    printf("%d",binaryToChrLabel(lroot->abits,noSamples));
   return;
 }
 

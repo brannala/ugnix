@@ -148,6 +148,6 @@ unsigned int binaryToChrLabel(unsigned int x, int noSamples);
 
 void fillTips(struct tree* lroot);
 
-void printTree(struct tree* lroot);
+void printTree(struct tree* lroot, int noSamples);
 
 

@@ -3,7 +3,7 @@ TESTFLAGS = -I testing
 CC = gcc
 vpath %.c src testing
 vpath %.h include testing
-CFLAGS = -Wall
+CFLAGS = -Wall -O3
 PROFILE = -g
 
 # build programs
