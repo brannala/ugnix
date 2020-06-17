@@ -4,6 +4,61 @@
 #include<coalescent.h>
 #endif
 
+struct geneTree* SortedMerge(struct geneTree* a, struct geneTree* b) 
+{ 
+	struct geneTree* result = NULL; 
+
+	if (a == NULL) 
+		return (b); 
+	else if (b == NULL) 
+		return (a); 
+	if (a->time >= b->time) { 
+		result = a; 
+		result->next = SortedMerge(a->next, b); 
+	} 
+	else { 
+		result = b; 
+		result->next = SortedMerge(a, b->next); 
+	} 
+	return (result); 
+} 
+
+void FrontBackSplit(struct geneTree* source, struct geneTree** frontRef, struct geneTree** backRef) 
+{ 
+	struct geneTree* fast; 
+	struct geneTree* slow; 
+	slow = source; 
+	fast = source->next; 
+	while (fast != NULL) { 
+		fast = fast->next; 
+		if (fast != NULL) { 
+			slow = slow->next; 
+			fast = fast->next; 
+		} 
+	} 
+	*frontRef = source; 
+	*backRef = slow->next; 
+	slow->next = NULL; 
+} 
+
+/* sorts the linked list by changing next pointers (not data) */
+void MergeSort(struct geneTree** headRef) 
+{ 
+	struct geneTree* head = *headRef; 
+	struct geneTree* a; 
+	struct geneTree* b; 
+
+
+	if ((head == NULL) || (head->next == NULL)) { 
+		return; 
+	} 
+
+	FrontBackSplit(head, &a, &b); 
+	MergeSort(&a); 
+	MergeSort(&b); 
+	*headRef = SortedMerge(a, b); 
+} 
+
 int isSingleton(unsigned int x)
 {
   if(x == 1)
@@ -17,7 +72,6 @@ int isSingleton(unsigned int x)
     }
   return 0;
 }
-
 
 chromosome* getChrPtr(int chr, chrsample* chrom)
 {
@@ -374,6 +428,33 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
     chrom->chrHead = commonAnc;
 }
 
+void updateCoalescentEvents(struct coalescent_events** coalescent_list, chrsample* chromSample, double totalTime)
+{
+	    struct coalescent_events* tmpCList;
+	    chromosome* tmpc;
+	    if(*coalescent_list == NULL)
+	      {
+		*coalescent_list = malloc(sizeof(struct coalescent_events));
+		tmpCList = *coalescent_list;
+	      }
+	    else
+	      {
+		tmpCList = *coalescent_list;
+		while(tmpCList->next != NULL)
+		  tmpCList = tmpCList->next;
+		tmpCList->next = malloc(sizeof(struct coalescent_events));
+		tmpCList = tmpCList->next;
+	      }
+
+	    tmpc = chromSample->chrHead;
+	    while(tmpc->next != NULL)
+	      tmpc = tmpc->next;
+	    tmpCList->chr = copy_chrom(tmpc);
+	    combineIdentAdjAncSegs(tmpCList->chr);
+	    tmpCList->time = totalTime;
+	    tmpCList->next = NULL;
+}
+
 unsigned long long int ipow( unsigned long long int base, int exp)
 {
   unsigned long long int result = 1;
@@ -438,9 +519,104 @@ struct geneTree* getGeneTree(double lower, double upper, struct coalescent_event
 	}
       localCL = localCL->next;
     }
+  MergeSort(&geneT);
   return geneT;
 }
 
+void addNode(unsigned int val, double time, struct tree* lroot)
+{
+  while(lroot->right != NULL)
+    {
+      if(lroot->right->abits == val)
+	{
+	  lroot->right->time = time;
+	  return;
+	}
+      else
+	if(lroot->left->abits == val)
+	{
+	  lroot->left->time = time;
+	  return;
+	}  
+      if((lroot->right->abits & val)!=0)
+	lroot = lroot->right;
+      else
+	lroot = lroot->left;
+    }
+  lroot->right = malloc(sizeof(struct tree));
+  lroot->right->right = NULL;
+  lroot->right->left = NULL;
+  lroot->right->abits = val;
+  lroot->right->time = time;
+  lroot->left = malloc(sizeof(struct tree));
+  lroot->left->abits = ~val & lroot->abits;
+  lroot->left->left = NULL;
+  lroot->left->right = NULL;
+}
+
+void splitNode(struct tree* lroot)
+{
+  unsigned int bitmask = 1;
+  while(!(bitmask & lroot->abits))
+    bitmask = bitmask << 1;
+  if((~bitmask & lroot->abits)!=0)
+    {
+      lroot->left = malloc(sizeof(struct tree));
+      lroot->right = malloc(sizeof(struct tree));
+      lroot->left->left = NULL;
+      lroot->left->right = NULL;
+      lroot->left->abits = bitmask;
+      lroot->right->right = NULL;
+      lroot->right->left = NULL;
+      lroot->right->abits = (~bitmask & lroot->abits);
+    }
+  return;
+}
+
+void fillTips(struct tree* lroot)
+{
+  if(lroot->left != NULL)
+    {
+      fillTips(lroot->left);
+      fillTips(lroot->right);
+    }
+  else
+    splitNode(lroot);
+  return;
+}
+
+unsigned int binaryToChrLabel(unsigned int x, int noSamples)
+{
+  unsigned int bitmask = 1;
+  unsigned int pos = 1;
+  while(!(bitmask & x) && (pos <= noSamples))
+    {
+      bitmask = bitmask << 1;
+      pos++;
+    }
+  return pos;
+
+}
+
+void printTree(struct tree* lroot)
+{
+  if(lroot->left != NULL)
+    {
+      printf("(");
+      printTree(lroot->left);
+      if(lroot->left->left == NULL)
+	printf(",");
+    }
+  if(lroot->right != NULL)
+    {
+      printTree(lroot->right);
+      printf(")");
+      printf(":%.2f",lroot->time);
+    }
+  if(lroot->left == NULL)
+    printf("%d",binaryToChrLabel(lroot->abits,10));
+  return;
+}
 
 int TestMRCAForAll(chrsample* chrom, unsigned int mrca)
 {

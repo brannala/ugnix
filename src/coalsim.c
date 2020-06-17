@@ -17,6 +17,8 @@ int prn_mutations = 0; /* print mutations */
 int prn_regions = 0; /* print all mrca regions */
 int calc_mrca = 0; /* do mrca calculations */
 int prn_sequences = 0; /* print sequence data to output file */
+int prn_genetrees = 0; /* print gene trees for mrca regions */
+int gtrees_to_stdout = 0; /*print gene trees to stdout */
 char version[] = "coalsim";
 
 static void print_msg()
@@ -33,6 +35,7 @@ static void print_help()
 	 "-s <seed for RNG>\n"
 	 "-u <specify scaling for bases: Mb Kb b>\n"
 	 "-a <output mrca information: r=regions i=intervals s=summary>\n"
+	 "-g <print gene trees for mrca regions s=screen f=file>\n"
 	 "-o <sequence output file name>\n"
 	 "-l <print detailed information about mutations>\n"
 	 "-d <print chromosomes>\n"
@@ -57,7 +60,7 @@ int main(int argc, char **argv)
   const gsl_rng_type * T;
   
 
-  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:dlh")) != -1)
+  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:g:dlh")) != -1)
     switch(c)
       {
       case 'c':
@@ -122,6 +125,11 @@ int main(int argc, char **argv)
 	    fprintf(stderr, "Error: failed to open output file %s\n",outfile);
 	    exit(1);
 	  }
+	break;
+      case 'g':
+	prn_genetrees = 1;
+	if(!strcmp("s",optarg))
+	   gtrees_to_stdout = 1;
 	break;
       case 'd':
 	prn_chrom = 1;
@@ -217,36 +225,14 @@ int main(int argc, char **argv)
     if(prob <= coalProb)
       /* coalescence event */
       {
-
 	coalescent_pair pair;
 	getCoalPair(r,noChrom,&pair);
 	coalescence(pair,&noChrom, chromSample);
-	struct coalescent_events* tmpCList;
-	if(coalescent_list == NULL)
-	  {
-	   coalescent_list = malloc(sizeof(struct coalescent_events));
-	   tmpCList = coalescent_list;
-	  }
-	else
-	  {
-	    tmpCList = coalescent_list;
-	    while(tmpCList->next != NULL)
-	      tmpCList = tmpCList->next;
-	    tmpCList->next = malloc(sizeof(struct coalescent_events));
-	    tmpCList = tmpCList->next;
-	  }
-	chromosome* tmpc;
-	tmpc = chromSample->chrHead;
-	while(tmpc->next != NULL)
-	  tmpc = tmpc->next;
-	tmpCList->chr = copy_chrom(tmpc);
-	combineIdentAdjAncSegs(tmpCList->chr);
-	tmpCList->time = totalTime;
-	tmpCList->next = NULL; 
-      	if(calc_mrca)
+	if(prn_genetrees)
+	    updateCoalescentEvents(&coalescent_list,chromSample,totalTime);
+      	if(calc_mrca || prn_genetrees) 
 	  getMRCAs(&head,chromSample,totalTime,mrca);
 	noCoal++;
-
       } 
     else
       if(prob <= (coalProb + recProb))
@@ -293,43 +279,6 @@ int main(int argc, char **argv)
   printf("No_Mutations: %d ",noMutations);
   printf("No_Ancestral_Chromosomes: %d\n",noChrom);
   printf("Oldest_TMRCA: %.2lf ",totalTime);
-
-  /* debugging code */
-  int coalcnt=0;
-  struct coalescent_events* tmpCL;
-  tmpCL = coalescent_list;
-  printf("\n");
-  while(tmpCL != NULL)
-    {
-      ancestry* tmpa;
-      coalcnt++;
-      printf("Coalescent: %d Time: %f\n",coalcnt,tmpCL->time);
-      tmpa = tmpCL->chr->anc;
-      while(tmpa != NULL)
-	{
-	  printf("pos: %f ",tmpa->position);
-	  displayBits(tmpa->abits,noSamples);
-	  printf(" isSingleton: %d",isSingleton(tmpa->abits));
-	    printf("\n");
-	  tmpa = tmpa->next;
-	}
-      tmpCL = tmpCL->next;
-    }
-  struct mrca_list* tmp_mrca_list = head;
-  while(tmp_mrca_list != NULL)
-    {
-      struct geneTree* g1 = getGeneTree(tmp_mrca_list->lower_end, tmp_mrca_list->upper_end,coalescent_list);
-      while(g1 != NULL)
-	{
-	  printf("time: %f anc (/2N)",g1->time/(2.0*popSize));
-	  displayBits(g1->abits,noSamples);
-	  printf("\n");
-	  g1 = g1->next;
-	}
-      tmp_mrca_list = tmp_mrca_list->next;
-    }
-
-
   
   if(calc_mrca)
     MRCAStats(head,mrca_head,smalldiff,chromTotBases,seqUnits,baseUnit,prn_mrca,prn_regions);
@@ -352,12 +301,55 @@ int main(int argc, char **argv)
 	  fprintf(out_file,"\n");
 	}
     }
+
+  if(prn_genetrees)
+    {
+      struct mrca_list* tmp_mrca_list = head;
+      struct tree* t1;
+      struct geneTree* g2;
+      printf("\nGene trees for chromosome regions\n");
+      printf("-----------------------------------\n");	
+      printf("MRCA Interval:       Gene Tree:\n\n");
+      while(tmp_mrca_list != NULL)
+	{
+	  struct geneTree* g1 = getGeneTree(tmp_mrca_list->lower_end, tmp_mrca_list->upper_end,coalescent_list);
+	  g2=g1;
+	  t1 = malloc(sizeof(struct tree));
+	  t1->abits = g2->abits;
+	  t1->time = g2->time;
+	  t1->left = NULL;
+	  t1->right = NULL;
+	  g2 = g2->next;
+	  while(g2 != NULL)
+	    {
+	      struct tree* tmp = t1;
+	      addNode(g2->abits,g2->time,tmp);
+	      g2 = g2->next;
+	    }
+	  fillTips(t1);
+	  printf("(%f, ", tmp_mrca_list->lower_end);
+	  printf("%f) ", tmp_mrca_list->upper_end);
+	  printTree(t1);
+	  printf("\n");
+	  g2=g1;
+	  g1 = g1->next;
+	  while(g1 != NULL)
+	    {
+	      free(g2);
+	      g2=g1;
+	      g1 = g1->next;
+	    }
+	  free(g2);
+	  tmp_mrca_list = tmp_mrca_list->next;
+	}
+    }
   
   if(prn_chrom)
     {
       printChromosomes(chromSample,noSamples);
     }
-  
+
+  /* clean up memory */
   delete_sample(chromSample->chrHead);
   free(chromSample); 
   free(baseUnit);

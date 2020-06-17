@@ -5,6 +5,12 @@
 
 #define POS2BASE(X,Y) (long)(ceil((X)*(Y))-1) /* convert POS X in (0,1) to BASE position 
 				   in sequence of length Y */
+struct tree {
+  struct tree* left;
+  struct tree* right;
+  unsigned int abits;
+  double time;
+};
 
 struct mutation
 {
@@ -97,6 +103,8 @@ void combineIdentAdjAncSegs(chromosome *ptrchr);
 
 void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom);
 
+void updateCoalescentEvents(struct coalescent_events** coalescent_list, chrsample* chromSample, double totalTime);
+
 struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list);
 
 unsigned long long int ipow( unsigned long long int base, int exp);
@@ -131,3 +139,15 @@ char JC69RBase(gsl_rng * r, char currBase);
 void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);
 
 int isSingleton(unsigned int x);
+
+void addNode(unsigned int val, double time, struct tree* lroot);
+
+void splitNode(struct tree* lroot);
+
+unsigned int binaryToChrLabel(unsigned int x, int noSamples);
+
+void fillTips(struct tree* lroot);
+
+void printTree(struct tree* lroot);
+
+
