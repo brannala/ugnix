@@ -414,7 +414,8 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
   ptrchr1 = getChrPtr(pair.chr1, chrom);
   ptrchr2 = getChrPtr(pair.chr2, chrom);
   commonAnc = mergeChr(ptrchr1, ptrchr2);
-  //  combineIdentAdjAncSegs(commonAnc);
+  // check?
+  // combineIdentAdjAncSegs(commonAnc);
   delete_chrom(ptrchr1,chrom);
   delete_chrom(ptrchr2,chrom);
   if(*noChrom > 1)
@@ -470,13 +471,13 @@ unsigned long long int ipow( unsigned long long int base, int exp)
   return result;
 }
 
-struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list)
+struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list, unsigned int mrca)
 {
   struct geneTree* geneT = NULL;
   struct geneTree* currGT = NULL;
   struct coalescent_events* localCL=coalescent_list;
   ancestry* localAnc;
-  while(localCL != NULL)
+  while((localCL != NULL)&&((currGT == NULL)||(currGT->abits != mrca)))
     {
       localAnc = localCL->chr->anc;
       double lastPos=0.0;
@@ -598,23 +599,23 @@ unsigned int binaryToChrLabel(unsigned int x, int noSamples)
 
 }
 
-void printTree(struct tree* lroot, int noSamples)
+void printTree(struct tree* lroot, int noSamples, int toScreen, FILE* tree_file)
 {
   if(lroot->left != NULL)
     {
-      printf("(");
-      printTree(lroot->left,noSamples);
+      toScreen? fprintf(stderr,"(") : fprintf(tree_file,"(");
+      printTree(lroot->left,noSamples,toScreen,tree_file);
       if(lroot->left->left == NULL)
-	printf(",");
+	toScreen? fprintf(stderr,",") : fprintf(tree_file,",");
     }
   if(lroot->right != NULL)
     {
-      printTree(lroot->right,noSamples);
-      printf(")");
-      printf(":%.2f",lroot->time);
+      printTree(lroot->right,noSamples,toScreen,tree_file);
+      toScreen? fprintf(stderr,")") : fprintf(tree_file,")");
+      toScreen? fprintf(stderr,":%.2f",lroot->time) : fprintf(tree_file,":%.2f",lroot->time);
     }
   if(lroot->left == NULL)
-    printf("%d",binaryToChrLabel(lroot->abits,noSamples));
+    toScreen? fprintf(stderr,"%d",binaryToChrLabel(lroot->abits,noSamples)) : fprintf(tree_file,"%d",binaryToChrLabel(lroot->abits,noSamples));
   return;
 }
 

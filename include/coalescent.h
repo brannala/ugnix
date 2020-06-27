@@ -105,7 +105,7 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom);
 
 void updateCoalescentEvents(struct coalescent_events** coalescent_list, chrsample* chromSample, double totalTime);
 
-struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list);
+struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list, unsigned int mrca);
 
 unsigned long long int ipow( unsigned long long int base, int exp);
 
@@ -148,6 +148,6 @@ unsigned int binaryToChrLabel(unsigned int x, int noSamples);
 
 void fillTips(struct tree* lroot);
 
-void printTree(struct tree* lroot, int noSamples);
+void printTree(struct tree* lroot, int noSamples, int toScreen, FILE* tree_file);
 
 

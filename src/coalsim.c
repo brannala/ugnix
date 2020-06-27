@@ -5,6 +5,9 @@
 #endif
 
 FILE *out_file;
+FILE *tree_file;
+FILE *mrca_file;
+
 
 gsl_rng * r;
 
@@ -18,7 +21,8 @@ int prn_regions = 0; /* print all mrca regions */
 int calc_mrca = 0; /* do mrca calculations */
 int prn_sequences = 0; /* print sequence data to output file */
 int prn_genetrees = 0; /* print gene trees for mrca regions */
-int gtrees_to_stdout = 0; /*print gene trees to stdout */
+int gtrees_to_stdout = 0; /* print gene trees to stdout */
+int gtrees_to_file = 0; /* print gene trees to output file */
 char version[] = "coalsim";
 
 static void print_msg()
@@ -130,6 +134,18 @@ int main(int argc, char **argv)
 	prn_genetrees = 1;
 	if(!strcmp("s",optarg))
 	   gtrees_to_stdout = 1;
+	else
+	  if(!strcmp("f",optarg))
+	    {
+	      gtrees_to_file = 1;
+	      tree_file = fopen("trees.txt","w");
+	      mrca_file = fopen("mrcaintv.txt","w");
+	    }
+	  else
+	    {
+	      fprintf(stderr,"Unknown specifier '%s' for -a.\n",optarg);
+	      return 1;
+	    }
 	break;
       case 'd':
 	prn_chrom = 1;
@@ -307,12 +323,18 @@ int main(int argc, char **argv)
       struct mrca_list* tmp_mrca_list = head;
       struct tree* t1;
       struct geneTree* g2;
-      printf("\nGene trees for chromosome regions\n");
-      printf("-----------------------------------\n");	
-      printf("MRCA Interval:       Gene Tree:\n\n");
+      if(gtrees_to_stdout)
+	{
+	  fprintf(stderr,"\nGene trees for chromosome regions\n");
+	  fprintf(stderr,"-----------------------------------\n");	
+	  fprintf(stderr,"MRCA Interval:       Gene Tree:\n\n");
+	}
+      if(gtrees_to_file)
+	fprintf(stderr,"Printed gene trees to output file.\n");
+
       while(tmp_mrca_list != NULL)
 	{
-	  struct geneTree* g1 = getGeneTree(tmp_mrca_list->lower_end, tmp_mrca_list->upper_end,coalescent_list);
+	  struct geneTree* g1 = getGeneTree(tmp_mrca_list->lower_end, tmp_mrca_list->upper_end,coalescent_list,mrca);
 	  g2=g1;
 	  t1 = malloc(sizeof(struct tree));
 	  t1->abits = g2->abits;
@@ -327,10 +349,13 @@ int main(int argc, char **argv)
 	      g2 = g2->next;
 	    }
 	  fillTips(t1);
-	  printf("(%f, ", tmp_mrca_list->lower_end);
-	  printf("%f) ", tmp_mrca_list->upper_end);
-	  printTree(t1,noSamples);
-	  printf("\n");
+	  gtrees_to_stdout? fprintf(stderr,"(%f,", tmp_mrca_list->lower_end) : fprintf(mrca_file,"(%f,", tmp_mrca_list->lower_end);
+	  gtrees_to_stdout? fprintf(stderr,"%f)  ", tmp_mrca_list->upper_end) : fprintf(mrca_file,"%f)  ", tmp_mrca_list->upper_end); 
+	  if(gtrees_to_file)
+	    fprintf(mrca_file,"\n");
+	  printTree(t1,noSamples,gtrees_to_stdout,tree_file);
+	  gtrees_to_stdout? fprintf(stderr,"\n") : fprintf(tree_file,"\n");
+	  	  
 	  g2=g1;
 	  g1 = g1->next;
 	  while(g1 != NULL)
@@ -381,5 +406,10 @@ int main(int argc, char **argv)
 
   if(out_file != NULL)
     fclose(out_file);
+  if(tree_file != NULL)
+    fclose(tree_file);
+  if(mrca_file !=NULL)
+    fclose(mrca_file);
+
 }
 
