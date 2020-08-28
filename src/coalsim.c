@@ -143,7 +143,7 @@ int main(int argc, char **argv)
 	    }
 	  else
 	    {
-	      fprintf(stderr,"Unknown specifier '%s' for -a.\n",optarg);
+	      fprintf(stderr,"Unknown specifier '%s' for -g.\n",optarg);
 	      return 1;
 	    }
 	break;
