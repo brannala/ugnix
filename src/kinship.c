@@ -12,16 +12,16 @@ char filename[MAX_FILE_NAME];
 
 static void program_help()
 {
-  printf("Usage: ./output [OPTION]... FILE\n\n");
-  printf("Measures of relatedness: \n"
-	 "-i print inbreeding coefficient for each individual\n"
-	 "-k print kinship coefficient between a pair of individuals\n"
-	 "-r print coefficient of relatedness between a pair of individuals\n\n");
+  printf("Usage: kinship [OPTION]... FILE\n\n");
+  printf("Calculate measures of relatedness from pedigrees: \n"
+	 "-i inbreeding coefficients\n"
+	 "-k pairwise kinship coefficients\n"
+	 "-r pairwise relatedness coefficients\n\n");
 }
 
 static void print_msg()
 {
-  printf("Usage: ./output [OPTION]... FILE\n Try './output -h' for more information.\n\n");
+  printf("Usage: kinship [OPTION]... FILE\n Try 'kinship -h' for more information.\n\n");
 }
 
 
