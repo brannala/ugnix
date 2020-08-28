@@ -8,13 +8,19 @@ PROFILE = -g
 
 # build programs
 
-all: gsum het coalsim
+all: kinship gsum het coalsim
+kinship: kinship.o data.o -lglib-2.0
+	$(CC) $(PROFILE) kinship.o data.o -lglib-2.0 -lm -o kinship
 het: het.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) het.o uGnix.o -lglib-2.0 -lm -o het
 gsum: gsum.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) gsum.o uGnix.o -lglib-2.0 -lm -o gsum
 coalsim: coalsim.o coalescent.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) coalsim.o coalescent.o uGnix.o -lglib-2.0 -lm -lgsl -lgslcblas -o coalsim
+kinship.o: kinship.c kinship_data.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+data.o: data.c kinship_data.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 het.o: het.c uGnix.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 gsum.o: gsum.c uGnix.h
@@ -26,8 +32,8 @@ coalescent.o: coalescent.c uGnix.h coalescent.h
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim test_ugnix test_coalescent runtests
-	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o test_ugnix.o test_coalescent.o unity.o
+	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship
+	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o
 tidy:
 	$(RM) *.o
 
