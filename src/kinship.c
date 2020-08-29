@@ -1,14 +1,17 @@
+#include<uGnix.h>
 #include "kinship_data.h"
+
 
 /* options */
 int opt_print_inbreeding = 0; /* print inbreeding coefficient */
 int opt_print_kinship = 0; /* print kinship coefficient  */
 int opt_print_relatedness = 0; /* print coefficient of relatedness */
 int opt_print_help = 0; /* print help information */
-
+int opt_verbose = 0; /* print diagnostic information in output file */
 
 FILE *fp;
 char filename[MAX_FILE_NAME];
+char version[] = "kinship";
 
 static void program_help()
 {
@@ -102,47 +105,59 @@ static void print_output(int **individual,int **father,int **mother,int n, char 
   /* print kinship coefficient between a pair of individuals */
   if(result == 'k')
     {
+      printf("Kinship Coefficients By Index\n");
+      printf("----------------------------------->\n");
+      printf("        ");
+      for(j = 0; j < n; ++j)
+	printf("%-8d ",j+1);
       printf("\n");
-      printf(" The kinship coefficients are given by \n");
       for(j = 0; j < n; ++j)
 	{
+	  printf("%-8d",j+1);
 	  for(i = 0; i < n; ++i)
 	    {
-	      printf("%f \t", *(phi + i*n + j));
+	      printf("%-7f ", *(phi + i*n + j));
 	    }
 	  printf("\n");
 	}
+      printf("----------------------------------->\n");
       printf("\n");
     }
   
-  /* print inbreeding coefficient for each individual */
+ /* print inbreeding coefficient for each individual */
   else if(result == 'i')
     {
-      printf("\n");
-      printf(" The inbreeding coefficients are given by \n");
-     
+      printf("Inbreeding Coefficients By Index\n");
+      printf("------------------------------------>\n");
       for(j = 0; j < n ; ++j)
 	{
-	  printf("%f \t",*(f+j));
+	  printf("%-8d ",j+1);
+	  printf("%-8f\n",*(f+j));
 	}
+      printf("----------------------------------->\n");
       printf("\n");
     }
 
   /* print coefficient of relatedness between a pair of individuals */
   else if(result == 'r')
     {
-
-      printf("The coefficients of relatedness are given by \n");
+      printf("Relatedness Coefficients By Index\n");
+      printf("----------------------------------->\n");
+      printf("        ");
+      for(j = 0; j < n; ++j)
+	printf("%-8d ",j+1);
+      printf("\n");
       for(j = 0; j < n; ++j)
 	{
+	  printf("%-8d",j+1);
 	  for(i = 0; i < n; ++i)
 	    {
-	      printf("%lf \t", *(r + i*n + j));
+	      printf("%-7f ", *(r + i*n + j));
 	    }
 	  printf("\n");
 	}
+      printf("----------------------------------->\n");
       printf("\n");
-
     }
   free(phi);
   free(r);
@@ -156,7 +171,10 @@ int main(int argc, char **argv)
   bool inputFromFile = false;
   int c;
 
-  while((c = getopt(argc, argv, "hikr")) != -1)
+  fillheader(version);
+  show_header();
+
+  while((c = getopt(argc, argv, "hikrv")) != -1)
     {
       switch(c)
 	{
@@ -171,6 +189,9 @@ int main(int argc, char **argv)
 	  break;
 	case 'h':
 	  opt_print_help = 1;
+	  break;
+	case 'v':
+	  opt_verbose = 1;
 	  break;
 	case '?':
 	  if (isprint (optopt))
@@ -226,7 +247,7 @@ int main(int argc, char **argv)
   /* Print the individuals with the correct index */
   if(*E == 0)
     {
-      arrange(head,&individual,&father,&mother,index); 
+      arrange(opt_verbose,head,&individual,&father,&mother,index); 
       n = (*index);
     }
 

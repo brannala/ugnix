@@ -31,7 +31,7 @@ typedef struct P
 
 
 void  format_error_check(FILE *f, int *e); /* Checking data is in correct format for every trio */
-void arrange(family *head, int **i2, int **f2, int **m2, int *n); /* Arrange data in the format required for Kinship Calculation*/
+void arrange(int opt_verbose, family *head, int **i2, int **f2, int **m2, int *n); /* Arrange data in the format required for Kinship Calculation*/
 family* makeFamily(char* indv, char* dad, char* mom);
 family* Linked_List_Creation(FILE *f);
 void logical_error_check(family *head);

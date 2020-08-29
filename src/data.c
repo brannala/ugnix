@@ -398,7 +398,7 @@ void logical_error_check(family *head)
   g_hash_table_destroy(hash_3);  
 }
 
-void arrange(family *head, int **i2, int **f2, int **m2, int *n)
+void arrange(int opt_verbose, family *head, int **i2, int **f2, int **m2, int *n)
 {
   family* current;
 
@@ -407,6 +407,7 @@ void arrange(family *head, int **i2, int **f2, int **m2, int *n)
   int number_of_founder,familyIndex;
   int *individual, *father, *mother; /* Creating pointer for the final ordered representation of the data */
   int count;
+  int max_index=0; /* Bruce added. Largest index among all indivs */
 
   count = node_count(head);
 
@@ -444,21 +445,54 @@ void arrange(family *head, int **i2, int **f2, int **m2, int *n)
       *(*f2+j) = *(father+j);
       *(*m2+j) = *(mother+j);
     }
+
+  /* Bruce added. get maximum value of index */
   current = head;
-  while (current != NULL)
+  while(current != NULL)
     {
-      printf("Index: %d  Individual: %s\n",*(gint*)g_hash_table_lookup(hash,current->indv),current->indv);
+      if(*(gint*)g_hash_table_lookup(hash,current->indv) > max_index)
+	max_index = *(gint*)g_hash_table_lookup(hash,current->indv);
       current = current->next;
     }
-  printf("\n");
-  g_hash_table_foreach(hash_founder, (GHFunc)iterator, "Index: %d is the Founder Individual: %s\n");
-  printf("\n");
-  printf("The indexed list of the pedigree arranged as follows :\n");
-  for(int j = 0; j < familyIndex ; ++j)
-    {
-      printf("%d %d %d\n",*(*i2+j),*(*f2+j),*(*m2+j));
-    }
   
+  /* Bruce added. print individuals in index order. Users expect an ordered list! */
+  printf("Index      Indiv Label\n");
+  printf("------------------------------------\n");
+  for(int i=1; i<=max_index; i++)
+    {
+      current = head;
+      while (current != NULL)
+	{
+	  if(*(gint*)g_hash_table_lookup(hash,current->indv) == i)
+	    {
+	      printf("%-10d %s\n",*(gint*)g_hash_table_lookup(hash,current->indv),current->indv);
+	      break;
+	    }
+	  current = current->next;
+	}
+    }
+  printf("------------------------------------\n");
+  printf("\n");
+  if(opt_verbose)
+    {
+      printf("Indexes of Founder Individuals \n");
+      printf("------------------------------------\n");
+      printf("Index      Indiv Label\n");
+      printf("------------------------------------\n");
+      g_hash_table_foreach(hash_founder, (GHFunc)iterator, "%-10d %s\n");
+      printf("------------------------------------\n");
+      printf("\n");
+      printf("Pedigree Relationships By Index\n");
+      printf("------------------------------------\n");
+      printf("Child  Parent1 : Parent2\n");
+      printf("------------------------------------\n");
+      for(int j = 0; j < familyIndex ; ++j)
+	{
+	  printf("%-6d %-7d : %-7d\n",*(*i2+j),*(*f2+j),*(*m2+j));
+	}
+      printf("------------------------------------\n");
+      printf("\n");
+    }
   *n = familyIndex;
   g_hash_table_destroy(hash);
   g_hash_table_destroy(hash_founder);

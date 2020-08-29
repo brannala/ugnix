@@ -9,8 +9,8 @@ PROFILE = -g
 # build programs
 
 all: kinship gsum het coalsim
-kinship: kinship.o data.o -lglib-2.0
-	$(CC) $(PROFILE) kinship.o data.o -lglib-2.0 -lm -o kinship
+kinship: kinship.o data.o uGnix.o -lglib-2.0
+	$(CC) $(PROFILE) kinship.o data.o uGnix.o -lglib-2.0 -lm -o kinship
 het: het.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) het.o uGnix.o -lglib-2.0 -lm -o het
 gsum: gsum.o uGnix.o -lglib-2.0
