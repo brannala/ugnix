@@ -1,0 +1,7 @@
+#!/bin/bash
+if [ $# = 1 ]
+then
+    bcftools query -f '[%SAMPLE \t %CHROM-%POS \t %TGT\n] \n' $1 | sed 's/|/\t/' | sed 's/\//\t/' | sed '/^[[:space:]]*$/d;s/[[:space:]]*$//' | awk '{$2="proxypop" OFS $2} 1' | sed '$d' | sed 's/ \./ 0/' | sed 's/ \./ 0/'
+else
+    printf "Usage: bcf2ba3 <vcf file>"
+fi
