@@ -150,4 +150,8 @@ void fillTips(struct tree* lroot);
 
 void printTree(struct tree* lroot, int noSamples, int toScreen, FILE* tree_file);
 
+void printTreeNewick(struct tree* root, int noSamples, int toScreen, FILE* tree_file);
+
+void freeTree(struct tree* node);
+
 

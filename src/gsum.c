@@ -61,15 +61,12 @@ static void printSortedAlleles(GHashTable* hash,char* phrase)
 {
   unsigned int len;
   char** keyArray = (gchar **) g_hash_table_get_keys_as_array(hash,&len);
-  char oneline[MAXALL*MAXALLNM];
-  strcpy(oneline,phrase);
   qsort(keyArray,len,sizeof(char *),cstring_cmp);
+  printf("%s",phrase);
   for(unsigned int i=0; i<len; i++)
     {
-      strcat(oneline," ");
-      strcat(oneline,keyArray[i]);
+      printf(" %s",keyArray[i]);
     }
-  printf("%s",oneline);
   g_free(keyArray);
 }
 
@@ -179,8 +176,17 @@ int main(int argc, char **argv)
 	    printf("\n");
 	}
     } 
+  /* cleanup memory */
+  g_hash_table_destroy(dh.popKeys);
+  g_hash_table_destroy(dh.lociKeys);
+  for(int i=0; i<dpar.noPops; i++)
+    g_hash_table_destroy(dh.indKeys[i]);
+  for(int i=0; i<dpar.noLoci; i++)
+    g_hash_table_destroy(dh.alleleKeys[i]);
   if(inputFromFile)
     fclose(inputFile);
+
+  return 0;
 }
 
 

@@ -176,6 +176,14 @@ int main(int argc, char **argv)
       return 1;
     }
 
+  /* check sample size limit - ancestry bits use unsigned int (32-bit) */
+  if(noSamples > 31)
+    {
+      fprintf(stderr, "Error: sample size cannot exceed 31 (current limit due to 32-bit ancestry tracking).\n");
+      free(outfile);
+      return 1;
+    }
+
  /* create a generator chosen by the
     environment variable GSL_RNG_TYPE */
   gsl_rng_env_setup();
@@ -234,7 +242,7 @@ int main(int argc, char **argv)
     totRate = (noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize))+(recRate +mutRate)*ancLength;
     coalProb = ((noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize)))/totRate;
     recProb = recRate*ancLength/totRate;
-    assert(coalProb + recProb < 1.0);
+    assert(coalProb + recProb <= 1.0 + 1e-10);  /* allow small floating point tolerance */
     interArrivalTime = gsl_ran_exponential(r, 1.0/totRate);
     totalTime += interArrivalTime;
     prob = gsl_rng_uniform_pos(r);
@@ -349,13 +357,21 @@ int main(int argc, char **argv)
 	      g2 = g2->next;
 	    }
 	  fillTips(t1);
-	  gtrees_to_stdout? fprintf(stderr,"(%f,", tmp_mrca_list->lower_end) : fprintf(mrca_file,"(%f,", tmp_mrca_list->lower_end);
-	  gtrees_to_stdout? fprintf(stderr,"%f)  ", tmp_mrca_list->upper_end) : fprintf(mrca_file,"%f)  ", tmp_mrca_list->upper_end); 
-	  if(gtrees_to_file)
-	    fprintf(mrca_file,"\n");
-	  printTree(t1,noSamples,gtrees_to_stdout,tree_file);
+
+	  /* Print MRCA interval */
+	  if(gtrees_to_stdout)
+	    fprintf(stderr,"[%.6f,%.6f] ", tmp_mrca_list->lower_end, tmp_mrca_list->upper_end);
+	  else
+	    fprintf(mrca_file,"[%.6f,%.6f]\n", tmp_mrca_list->lower_end, tmp_mrca_list->upper_end);
+
+	  /* Print tree in proper Newick format with branch lengths */
+	  printTreeNewick(t1,noSamples,gtrees_to_stdout,tree_file);
 	  gtrees_to_stdout? fprintf(stderr,"\n") : fprintf(tree_file,"\n");
-	  	  
+
+	  /* Free tree memory */
+	  freeTree(t1);
+
+	  /* Free geneTree linked list */
 	  g2=g1;
 	  g1 = g1->next;
 	  while(g1 != NULL)
@@ -411,5 +427,8 @@ int main(int argc, char **argv)
   if(mrca_file !=NULL)
     fclose(mrca_file);
 
+  gsl_rng_free(r);
+
+  return 0;
 }
 

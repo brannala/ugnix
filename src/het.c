@@ -194,5 +194,18 @@ int main(int argc, char **argv)
     {
       print_help();
     }
+
+  /* cleanup memory */
+  free(dataArray);
+  g_hash_table_destroy(dh.popKeys);
+  g_hash_table_destroy(dh.lociKeys);
+  for(int i=0; i<dpar.noPops; i++)
+    g_hash_table_destroy(dh.indKeys[i]);
+  for(int i=0; i<dpar.noLoci; i++)
+    g_hash_table_destroy(dh.alleleKeys[i]);
+  if(inputFromFile)
+    fclose(inputFile);
+
+  return 0;
 }
 

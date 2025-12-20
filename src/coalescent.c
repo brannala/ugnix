@@ -312,10 +312,10 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       currAnc = currAnc->next;
     }
   assert(sumAnc != 0);
-  
+
   chrtmp->next = newRight;
-  *noChrom = *noChrom + 1;
-  *noChrom = *noChrom - 1;
+  /* Net chromosome count change: -1 (deleted original) + 2 (newLeft + newRight) = +1
+     The increment at line 305 after adding newLeft accounts for this */
 }
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
@@ -389,8 +389,11 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair)
 {
   if(noChrom > 2)
     {
-      pair->chr1 = gsl_rng_uniform_int(r, noChrom - 1);
-      pair->chr2 = gsl_rng_uniform_int(r, noChrom - 2);
+      /* Pick first chromosome uniformly from [0, noChrom-1] */
+      pair->chr1 = gsl_rng_uniform_int(r, noChrom);
+      /* Pick second chromosome uniformly from remaining [0, noChrom-2] */
+      pair->chr2 = gsl_rng_uniform_int(r, noChrom - 1);
+      /* Adjust to skip chr1 */
       if(pair->chr2 >= pair->chr1)
 	pair->chr2++;
     }
@@ -399,8 +402,6 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair)
       pair->chr1 = 0;
       pair->chr2 = 1;
     }
-
-
 }
 
 void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
@@ -477,6 +478,18 @@ struct geneTree* getGeneTree(double lower, double upper, struct coalescent_event
   struct geneTree* currGT = NULL;
   struct coalescent_events* localCL=coalescent_list;
   ancestry* localAnc;
+
+  #ifdef DEBUG_GENETREE
+  fprintf(stderr, "DEBUG getGeneTree: lower=%.4f upper=%.4f mrca=%u\n", lower, upper, mrca);
+  struct coalescent_events* debugCL = coalescent_list;
+  int eventNum = 0;
+  while(debugCL != NULL) {
+    fprintf(stderr, "  Event %d: time=%.2f, chr->anc->abits=%u\n",
+            eventNum++, debugCL->time, debugCL->chr->anc->abits);
+    debugCL = debugCL->next;
+  }
+  #endif
+
   while((localCL != NULL)&&((currGT == NULL)||(currGT->abits != mrca)))
     {
       localAnc = localCL->chr->anc;
@@ -599,6 +612,64 @@ unsigned int binaryToChrLabel(unsigned int x, int noSamples)
 
 }
 
+/* Helper function to print tree recursively with proper branch lengths */
+static void printTreeNewickHelper(struct tree* node, int noSamples, int toScreen,
+                                   FILE* tree_file, double parentTime)
+{
+  FILE* out = toScreen ? stderr : tree_file;
+
+  if(node->left != NULL && node->right != NULL)
+    {
+      /* Internal node with two children */
+      fprintf(out, "(");
+      printTreeNewickHelper(node->left, noSamples, toScreen, tree_file, node->time);
+      fprintf(out, ",");
+      printTreeNewickHelper(node->right, noSamples, toScreen, tree_file, node->time);
+      fprintf(out, ")");
+      /* Branch length from this node to parent */
+      double branchLen = parentTime - node->time;
+      if(branchLen > 0)
+        fprintf(out, ":%.4f", branchLen);
+    }
+  else
+    {
+      /* Tip node - branch length is from time 0 to parent */
+      fprintf(out, "%d:%.4f", binaryToChrLabel(node->abits, noSamples), parentTime);
+    }
+}
+
+/* Print gene tree in Newick format with branch lengths in generations */
+void printTreeNewick(struct tree* root, int noSamples, int toScreen, FILE* tree_file)
+{
+  FILE* out = toScreen ? stderr : tree_file;
+
+  if(root == NULL) return;
+
+  if(root->left != NULL && root->right != NULL)
+    {
+      fprintf(out, "(");
+      printTreeNewickHelper(root->left, noSamples, toScreen, tree_file, root->time);
+      fprintf(out, ",");
+      printTreeNewickHelper(root->right, noSamples, toScreen, tree_file, root->time);
+      fprintf(out, ");");  /* Root has no branch length, ends with semicolon */
+    }
+  else
+    {
+      /* Degenerate case: single tip */
+      fprintf(out, "%d;", binaryToChrLabel(root->abits, noSamples));
+    }
+}
+
+/* Free tree memory recursively */
+void freeTree(struct tree* node)
+{
+  if(node == NULL) return;
+  freeTree(node->left);
+  freeTree(node->right);
+  free(node);
+}
+
+/* Legacy function - kept for compatibility but uses absolute times (deprecated) */
 void printTree(struct tree* lroot, int noSamples, int toScreen, FILE* tree_file)
 {
   if(lroot->left != NULL)
