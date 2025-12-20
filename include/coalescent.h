@@ -32,19 +32,22 @@ typedef struct ancestry ancestry;
 struct chromosome
 {
   ancestry* anc;
-  struct chromosome* next;
 };
 typedef struct chromosome chromosome;
 
 typedef struct
 {
-  chromosome* chrHead;
+  chromosome** chrs;    /* array of chromosome pointers for O(1) access */
+  int count;            /* current number of chromosomes */
+  int capacity;         /* allocated capacity */
+  double ancLength;     /* cached total ancestral length */
 } chrsample;
 
 typedef struct
 {
   double location;
   chromosome* chrom;
+  int chromIdx;  /* index for O(1) deletion */
 } recombination_event;
 
 typedef struct
@@ -79,6 +82,7 @@ struct mrca_summary {
   struct mrca_summary* next;
 };
 
+/* O(1) chromosome access via array */
 chromosome* getChrPtr(int chr, chrsample* chrom);
 
 unsigned int unionAnc(unsigned int anc1, unsigned int anc2);
@@ -87,11 +91,22 @@ chromosome* copy_chrom(chromosome* sourceChr);
 
 void delete_anc(ancestry* head);
 
-void delete_chrom(chromosome* chrptr, chrsample* chrom);
+/* O(1) swap-and-pop deletion */
+void delete_chrom_idx(int idx, chrsample* chrom);
 
-void delete_sample(chromosome* head);
+void delete_sample(chrsample* chrom);
 
-double totalAncLength(const chrsample* chrom);
+/* Calculate total ancestral length (updates cache) */
+double calcAncLength(chrsample* chrom);
+
+/* Get cached ancestral length */
+double getAncLength(const chrsample* chrom);
+
+/* Update ancLength after coalescence (pass the overlap that was removed) */
+void updateAncLengthCoal(chrsample* chrom, double removed);
+
+/* Append chromosome to sample (grows array if needed) */
+void appendChrom(chrsample* chrom, chromosome* chr);
 
 void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv);
 
@@ -132,9 +147,31 @@ void printChromosomes(chrsample* chromSample, unsigned int noSamples);
 
 long convertToBases(long totBases, int seqUnit, double value);
 
-char** simulateSequences(mutation* mutation_list, int totBases, int noSamples, gsl_rng * r);
+/* Substitution model types */
+typedef enum {
+  SUBST_JC69,   /* Jukes-Cantor: equal rates, equal frequencies */
+  SUBST_HKY     /* HKY85: transition/transversion bias, variable frequencies */
+} subst_model_t;
 
+/* HKY model parameters */
+typedef struct {
+  double kappa;      /* transition/transversion ratio */
+  double pi[4];      /* base frequencies: A, C, G, T */
+  double ti_prob[4]; /* precomputed transition probs (normalized) */
+  double tv_prob[4][2]; /* precomputed transversion probs per base */
+} hky_params_t;
+
+/* Initialize HKY parameters (call once before simulation) */
+void initHKYParams(hky_params_t* params, double kappa,
+                   double piA, double piC, double piG, double piT);
+
+/* Substitution functions */
 char JC69RBase(gsl_rng * r, char currBase);
+char HKYRBase(gsl_rng * r, char currBase, const hky_params_t* params);
+
+/* Sequence simulation with model selection */
+char** simulateSequences(mutation* mutation_list, int totBases, int noSamples,
+                         gsl_rng * r, subst_model_t model, const hky_params_t* hky);
 
 void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);
 

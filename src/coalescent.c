@@ -59,33 +59,17 @@ void MergeSort(struct geneTree** headRef)
 	*headRef = SortedMerge(a, b); 
 } 
 
+/* O(1) check if x is a power of 2 (singleton ancestry) */
 int isSingleton(unsigned int x)
 {
-  if(x == 1)
-    return 1;
-  else
-    {
-      unsigned int z=1;
-      while(z < 1073741825)
-	if(x == (z*=2))
-	  return 1;
-    }
-  return 0;
+  return x && !(x & (x - 1));
 }
 
+/* O(1) array access */
 chromosome* getChrPtr(int chr, chrsample* chrom)
 {
-  chromosome* tmp = chrom->chrHead;
-  int i = 0;
-  while( i <= chr )
-    {
-      assert(tmp != NULL);
-      if(i==chr)
-	break;
-      tmp = tmp->next;
-      i++;
-    }
-  return(tmp);
+  assert(chr >= 0 && chr < chrom->count);
+  return chrom->chrs[chr];
 }
 
 unsigned int unionAnc(unsigned int anc1, unsigned int anc2)
@@ -99,7 +83,6 @@ chromosome* copy_chrom(chromosome* sourceChr)
   ancestry* currNew;
   ancestry* currOld;
   newChr = malloc(sizeof(chromosome));
-  newChr->next = NULL;
   currOld = sourceChr->anc;
   newChr->anc = malloc(sizeof(ancestry));
   int firstAnc=1;
@@ -132,50 +115,49 @@ void delete_anc(ancestry* head)
     }
 }
 
-void delete_chrom(chromosome* chrptr, chrsample* chrom)
+/* O(1) swap-and-pop deletion by index */
+void delete_chrom_idx(int idx, chrsample* chrom)
 {
-  chromosome* tempChrom;
-  chromosome* currChrom = chrom->chrHead;
-  
-  if(currChrom == chrptr)
-    {
-      tempChrom = currChrom;
-      currChrom = currChrom->next;
-      chrom->chrHead = currChrom;
-    }
-  else
-    {
-      while(chrptr != currChrom->next)
-	currChrom = currChrom->next;
-      tempChrom = currChrom->next;
-      currChrom->next = currChrom->next->next;
-    }
-  delete_anc(tempChrom->anc);
-  free(tempChrom);
+  assert(idx >= 0 && idx < chrom->count);
+  chromosome* toDelete = chrom->chrs[idx];
+  delete_anc(toDelete->anc);
+  free(toDelete);
+  /* Swap with last element and decrement count */
+  chrom->count--;
+  if (idx < chrom->count) {
+    chrom->chrs[idx] = chrom->chrs[chrom->count];
+  }
 }
 
-void delete_sample(chromosome* head)
+void delete_sample(chrsample* chrom)
 {
-  chromosome* tmp;
-  while (head != NULL)
-    {
-      tmp = head;
-      head = head->next;
-      delete_anc(tmp->anc);
-      free(tmp);
-    }
+  for (int i = 0; i < chrom->count; i++) {
+    delete_anc(chrom->chrs[i]->anc);
+    free(chrom->chrs[i]);
+  }
+  free(chrom->chrs);
 }
 
-double totalAncLength(const chrsample* chrom)
+/* Append chromosome to array, growing if needed */
+void appendChrom(chrsample* chrom, chromosome* chr)
 {
-  chromosome* currChrom = chrom->chrHead;
-  ancestry* tmp_anc; 
+  if (chrom->count >= chrom->capacity) {
+    chrom->capacity *= 2;
+    chrom->chrs = realloc(chrom->chrs, chrom->capacity * sizeof(chromosome*));
+  }
+  chrom->chrs[chrom->count++] = chr;
+}
+
+/* Calculate total ancestral length and update cache */
+double calcAncLength(chrsample* chrom)
+{
+  ancestry* tmp_anc;
   double lastPosition = 0;
   double totLength = 0;
-  while(currChrom != NULL)
+  for (int i = 0; i < chrom->count; i++)
     {
-      tmp_anc = currChrom->anc;
-      lastPosition=0;
+      tmp_anc = chrom->chrs[i]->anc;
+      lastPosition = 0;
       while(tmp_anc != NULL)
 	{
 	  if(tmp_anc->abits)
@@ -183,68 +165,77 @@ double totalAncLength(const chrsample* chrom)
 	  lastPosition = tmp_anc->position;
 	  tmp_anc = tmp_anc->next;
 	}
-      currChrom = currChrom->next;
     }
-  return(totLength);
+  chrom->ancLength = totLength;
+  return totLength;
 }
 
-/* 
-eventPos is the absolute position of rec event on cumulative ancestral 
-chromosome material (ancLength) -> getRecEvent finds the recombinant chromosome 
-and relative position of recombination event on that chromosome modifies recEv 
+/* Get cached ancestral length */
+double getAncLength(const chrsample* chrom)
+{
+  return chrom->ancLength;
+}
+
+/* Update ancLength cache after coalescence */
+void updateAncLengthCoal(chrsample* chrom, double removed)
+{
+  chrom->ancLength -= removed;
+}
+
+/*
+eventPos is the absolute position of rec event on cumulative ancestral
+chromosome material (ancLength) -> getRecEvent finds the recombinant chromosome
+and relative position of recombination event on that chromosome modifies recEv
 */
 
 void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 {
-  chromosome* currChrom = chrom->chrHead;
-  ancestry* tmp_anc; 
+  ancestry* tmp_anc;
   double lastPosition = 0;
   double currLength = 0;
-  unsigned int foundPosition=0;
-  while((currChrom != NULL)&&(!foundPosition))
+  unsigned int foundPosition = 0;
+
+  for (int i = 0; i < chrom->count && !foundPosition; i++)
     {
-      tmp_anc = currChrom->anc;
-      lastPosition=0;
+      tmp_anc = chrom->chrs[i]->anc;
+      lastPosition = 0;
       double lastLength = currLength;
-      double nonAncestralLength=0;
-      while((tmp_anc != NULL)&&(!foundPosition))
+      double nonAncestralLength = 0;
+      while ((tmp_anc != NULL) && (!foundPosition))
 	{
-	  if(tmp_anc->abits)
-	      currLength += tmp_anc->position - lastPosition;
+	  if (tmp_anc->abits)
+	    currLength += tmp_anc->position - lastPosition;
 	  else
 	    nonAncestralLength += tmp_anc->position - lastPosition;
-	  if(currLength > eventPos)
+	  if (currLength > eventPos)
 	    {
 	      recEv->location = eventPos + nonAncestralLength - lastLength;
-	      recEv->chrom = currChrom;
-	      foundPosition=1;
+	      recEv->chrom = chrom->chrs[i];
+	      recEv->chromIdx = i;  /* Store index for O(1) deletion */
+	      foundPosition = 1;
 	    }
 	  lastPosition = tmp_anc->position;
 	  tmp_anc = tmp_anc->next;
 	}
-      currChrom = currChrom->next;
     }
 }
 
 void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom)
 {
-  chromosome* chrtmp;
-  chrtmp = recEv.chrom;
+  chromosome* chrtmp = recEv.chrom;
   ancestry* tmp = chrtmp->anc;
   ancestry* currAnc = NULL;
   chromosome* newLeft = malloc(sizeof(chromosome));
   chromosome* newRight = malloc(sizeof(chromosome));
-  newLeft->next = NULL;
-  newRight->next = NULL;
 
   newRight->anc = malloc(sizeof(ancestry));
   newRight->anc->abits = 0;
   newRight->anc->position = recEv.location;
   newRight->anc->next = NULL;
   currAnc = newRight->anc;
-  while( tmp != NULL )
+  while (tmp != NULL)
     {
-      if(recEv.location < tmp->position)
+      if (recEv.location < tmp->position)
 	{
 	  currAnc->next = malloc(sizeof(ancestry));
 	  currAnc = currAnc->next;
@@ -260,9 +251,9 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   tmp = chrtmp->anc;
   currAnc = newLeft->anc;
   int atHead = 1;
-  while( tmp->position < recEv.location )
+  while (tmp->position < recEv.location)
     {
-      if( !atHead )
+      if (!atHead)
 	{
 	  currAnc->next = malloc(sizeof(ancestry));
 	  currAnc = currAnc->next;
@@ -273,7 +264,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       tmp = tmp->next;
       atHead = 0;
     }
-  if( !atHead )
+  if (!atHead)
     {
       currAnc->next = malloc(sizeof(ancestry));
       currAnc = currAnc->next;
@@ -286,43 +277,41 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   currAnc->abits = 0;
   currAnc->position = 1.0;
   currAnc->next = NULL;
-    
-  delete_chrom(chrtmp, chrom);
-  chrtmp = chrom->chrHead;
-  while(chrtmp->next != NULL)
-    chrtmp = chrtmp->next;
-  
+
+  /* O(1) deletion using stored index */
+  delete_chrom_idx(recEv.chromIdx, chrom);
+
+  /* Verify non-empty ancestry before adding */
   currAnc = newLeft->anc;
-  unsigned int sumAnc=0;
-  while( currAnc != NULL)
-    {
-      sumAnc += currAnc->abits;
-      currAnc = currAnc->next;
-    }
-  assert(sumAnc != 0);
-  chrtmp->next = newLeft;
-  chrtmp = chrtmp->next;
-  *noChrom = *noChrom + 1;
-  
-  currAnc = newRight->anc;
-  sumAnc=0;
-  while( currAnc != NULL)
+  unsigned int sumAnc = 0;
+  while (currAnc != NULL)
     {
       sumAnc += currAnc->abits;
       currAnc = currAnc->next;
     }
   assert(sumAnc != 0);
 
-  chrtmp->next = newRight;
-  /* Net chromosome count change: -1 (deleted original) + 2 (newLeft + newRight) = +1
-     The increment at line 305 after adding newLeft accounts for this */
+  currAnc = newRight->anc;
+  sumAnc = 0;
+  while (currAnc != NULL)
+    {
+      sumAnc += currAnc->abits;
+      currAnc = currAnc->next;
+    }
+  assert(sumAnc != 0);
+
+  /* Append new chromosomes */
+  appendChrom(chrom, newLeft);
+  appendChrom(chrom, newRight);
+
+  /* Net change: -1 (deleted) + 2 (added) = +1 */
+  *noChrom = *noChrom + 1;
 }
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 {
   double epsilon = 1e-10;
   chromosome* commonAnc = malloc(sizeof(chromosome));
-  commonAnc->next = NULL;
   commonAnc->anc = malloc(sizeof(ancestry));
   commonAnc->anc->abits=0;
   commonAnc->anc->position=0;
@@ -406,34 +395,30 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair)
 
 void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
 {
-
   *noChrom = *noChrom - 1;
-  chromosome* tmp;
-  chromosome* ptrchr1 = NULL;
-  chromosome* ptrchr2 = NULL;
-  chromosome* commonAnc = NULL;
-  ptrchr1 = getChrPtr(pair.chr1, chrom);
-  ptrchr2 = getChrPtr(pair.chr2, chrom);
-  commonAnc = mergeChr(ptrchr1, ptrchr2);
-  // check?
-  // combineIdentAdjAncSegs(commonAnc);
-  delete_chrom(ptrchr1,chrom);
-  delete_chrom(ptrchr2,chrom);
-  if(*noChrom > 1)
-    {
-      tmp = chrom->chrHead;
-      while(tmp->next != NULL)
-	tmp = tmp->next;
-      tmp->next = commonAnc;
-    }
-  else
-    chrom->chrHead = commonAnc;
+  chromosome* ptrchr1 = getChrPtr(pair.chr1, chrom);
+  chromosome* ptrchr2 = getChrPtr(pair.chr2, chrom);
+  chromosome* commonAnc = mergeChr(ptrchr1, ptrchr2);
+
+  /* Delete higher index first to preserve lower index validity
+     (swap-and-pop changes indices) */
+  int idx1 = pair.chr1;
+  int idx2 = pair.chr2;
+  if (idx1 > idx2) {
+    delete_chrom_idx(idx1, chrom);
+    delete_chrom_idx(idx2, chrom);
+  } else {
+    delete_chrom_idx(idx2, chrom);
+    delete_chrom_idx(idx1, chrom);
+  }
+
+  /* Append merged chromosome */
+  appendChrom(chrom, commonAnc);
 }
 
 void updateCoalescentEvents(struct coalescent_events** coalescent_list, chrsample* chromSample, double totalTime)
 {
 	    struct coalescent_events* tmpCList;
-	    chromosome* tmpc;
 	    if(*coalescent_list == NULL)
 	      {
 		*coalescent_list = malloc(sizeof(struct coalescent_events));
@@ -448,10 +433,8 @@ void updateCoalescentEvents(struct coalescent_events** coalescent_list, chrsampl
 		tmpCList = tmpCList->next;
 	      }
 
-	    tmpc = chromSample->chrHead;
-	    while(tmpc->next != NULL)
-	      tmpc = tmpc->next;
-	    tmpCList->chr = copy_chrom(tmpc);
+	    /* Get the last chromosome (most recently coalesced) */
+	    tmpCList->chr = copy_chrom(chromSample->chrs[chromSample->count - 1]);
 	    combineIdentAdjAncSegs(tmpCList->chr);
 	    tmpCList->time = totalTime;
 	    tmpCList->next = NULL;
@@ -692,56 +675,40 @@ void printTree(struct tree* lroot, int noSamples, int toScreen, FILE* tree_file)
 
 int TestMRCAForAll(chrsample* chrom, unsigned int mrca)
 {
-  chromosome* currChrom = chrom->chrHead;
   ancestry* tmp_anc;
-  while(currChrom != NULL)
+  for (int i = 0; i < chrom->count; i++)
     {
-      tmp_anc = currChrom->anc;
-      while(tmp_anc != NULL)
+      tmp_anc = chrom->chrs[i]->anc;
+      while (tmp_anc != NULL)
 	{
-	  if((tmp_anc->abits > 0)&&(tmp_anc->abits != mrca))
-	    return(0); // not all zeros or all ones therefore not mrca of sample
+	  if ((tmp_anc->abits > 0) && (tmp_anc->abits != mrca))
+	    return 0; // not all zeros or all ones therefore not mrca of sample
 	  tmp_anc = tmp_anc->next;
 	}
-      currChrom = currChrom->next;
     }
-  return(1);
+  return 1;
 }
 
 chrsample* create_sample(int noChrom)
 {
   chrsample* chromSample = malloc(sizeof(chrsample));
-  chromSample->chrHead = NULL;
-  chromosome* currentChrom;
-  chromosome* newChrom;
+  /* Initial capacity with room to grow for recombination */
+  chromSample->capacity = noChrom * 4;
+  chromSample->chrs = malloc(chromSample->capacity * sizeof(chromosome*));
+  chromSample->count = 0;
+  chromSample->ancLength = noChrom;  /* Initial: each chromosome has length 1 */
 
-  // create linked list of n sampled chromosomes
-  for(int i=0; i<noChrom; i++)
+  // create array of n sampled chromosomes
+  for (int i = 0; i < noChrom; i++)
     {
-      if(chromSample->chrHead == NULL)
-	{
-	  chromSample->chrHead = malloc(sizeof(chromosome));
-	  chromSample->chrHead->next = NULL;
-	  chromSample->chrHead->anc = malloc(sizeof(ancestry));
-	  chromSample->chrHead->anc->next = NULL;
-	  chromSample->chrHead->anc->abits = 1;
-	  chromSample->chrHead->anc->position = 1.0;
-	  currentChrom = chromSample->chrHead;
-	}
-      else
-	{
-	  newChrom = malloc(sizeof(chromosome));
-	  newChrom->next = NULL;
-	  newChrom->anc = malloc(sizeof(ancestry));
-	  newChrom->anc->next = NULL;
-	  newChrom->anc->abits = 1;
-	  newChrom->anc->abits <<= i;
-	  newChrom->anc->position = 1.0;
-	  currentChrom->next = newChrom;
-	  currentChrom = newChrom;
-	}
+      chromosome* newChrom = malloc(sizeof(chromosome));
+      newChrom->anc = malloc(sizeof(ancestry));
+      newChrom->anc->next = NULL;
+      newChrom->anc->abits = 1u << i;
+      newChrom->anc->position = 1.0;
+      chromSample->chrs[chromSample->count++] = newChrom;
     }
-  return(chromSample);
+  return chromSample;
 }
 
 void addMRCAInterval(struct mrca_list** head, double newlower,
@@ -810,41 +777,37 @@ void addMRCAInterval(struct mrca_list** head, double newlower,
 
 void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime, unsigned int mrca)
 {
-  double newlower=0;
-  double newupper=0;
+  double newlower = 0;
+  double newupper = 0;
   ancestry* tmp = NULL;
-  chromosome* currentChrom;
   // collect information on intervals and ages of unique mrca's
-  int firstInt=1;
-  currentChrom = chromSample->chrHead; 
-  while(currentChrom->next != NULL)
-    currentChrom = currentChrom->next;
+  int firstInt = 1;
+  /* Get the last chromosome (most recently modified) */
+  chromosome* currentChrom = chromSample->chrs[chromSample->count - 1];
   tmp = currentChrom->anc;
-  while((tmp->next != NULL)||firstInt)
+  while ((tmp->next != NULL) || firstInt)
     {
-      if(firstInt)
+      if (firstInt)
 	{
-	  if(tmp->abits == mrca)
+	  if (tmp->abits == mrca)
 	    {
 	      newlower = 0.0;
 	      newupper = tmp->position;
-	      addMRCAInterval(head,newlower,newupper,totalTime);
+	      addMRCAInterval(head, newlower, newupper, totalTime);
 	    }
-	  firstInt=0;
-	  //  if(tmp->next != NULL)
-	  //  tmp = tmp->next;
+	  firstInt = 0;
 	}
       else
 	{
-	  if(tmp->next->abits == mrca)
+	  if (tmp->next->abits == mrca)
 	    {
 	      newlower = tmp->position;
 	      newupper = tmp->next->position;
-	      addMRCAInterval(head,newlower,newupper,totalTime);
+	      addMRCAInterval(head, newlower, newupper, totalTime);
 	    }
 	  tmp = tmp->next;
 	}
-    } 
+    }
 }
 
 void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double smalldiff, long chromTotBases,
@@ -980,34 +943,33 @@ void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double sm
 
 void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time)
 {
-  chromosome* currChrom = chrom->chrHead;
-  ancestry* tmp_anc; 
+  ancestry* tmp_anc;
   double lastPosition = 0;
   double currLength = 0;
-  unsigned int foundPosition=0;
-  while((currChrom != NULL)&&(!foundPosition))
+  unsigned int foundPosition = 0;
+
+  for (int i = 0; i < chrom->count && !foundPosition; i++)
     {
-      tmp_anc = currChrom->anc;
-      lastPosition=0;
+      tmp_anc = chrom->chrs[i]->anc;
+      lastPosition = 0;
       double lastLength = currLength;
-      double nonAncestralLength=0;
-      while((tmp_anc != NULL)&&(!foundPosition))
+      double nonAncestralLength = 0;
+      while ((tmp_anc != NULL) && (!foundPosition))
 	{
-	  if(tmp_anc->abits)
-	      currLength += tmp_anc->position - lastPosition;
+	  if (tmp_anc->abits)
+	    currLength += tmp_anc->position - lastPosition;
 	  else
 	    nonAncestralLength += tmp_anc->position - lastPosition;
-	  if(currLength > eventPos)
+	  if (currLength > eventPos)
 	    {
 	      mutEv->location = eventPos + nonAncestralLength - lastLength;
 	      mutEv->age = time;
 	      mutEv->abits = tmp_anc->abits;
-	      foundPosition=1;
+	      foundPosition = 1;
 	    }
 	  lastPosition = tmp_anc->position;
 	  tmp_anc = tmp_anc->next;
 	}
-      currChrom = currChrom->next;
     }
 }
 
@@ -1035,27 +997,23 @@ void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
 
 void printChromosomes(chrsample* chromSample, unsigned int noSamples)
 {
-  int currChr=0;
-  chromosome* currentChrom=NULL;
-  ancestry* tmp=NULL;
-  currentChrom = chromSample->chrHead;
-  while(currentChrom != NULL)
+  ancestry* tmp = NULL;
+
+  for (int i = 0; i < chromSample->count; i++)
     {
-      printf("\nChr: %d: \n",currChr);
-      tmp = currentChrom->anc;
-      while(tmp != NULL)
+      printf("\nChr: %d: \n", i);
+      tmp = chromSample->chrs[i]->anc;
+      while (tmp != NULL)
 	{
-	  if((tmp->next == NULL) || (tmp->next->abits != tmp->abits))
-	    { 
-	      displayBits(tmp->abits,noSamples);
-	      printf(" %lf \n",tmp->position);  
+	  if ((tmp->next == NULL) || (tmp->next->abits != tmp->abits))
+	    {
+	      displayBits(tmp->abits, noSamples);
+	      printf(" %lf \n", tmp->position);
 	      tmp = tmp->next;
 	    }
 	  else
 	    tmp = tmp->next;
-	} 
-      currentChrom = currentChrom->next;
-      currChr++;
+	}
     }
 }
 
@@ -1073,74 +1031,165 @@ long convertToBases(long totBases, int seqUnit, double value)
 	return -1;
 }
 
+/* JC69 substitution: pick uniformly from the 3 other bases
+   Uses static arrays to avoid repeated stack allocation */
 char JC69RBase(gsl_rng * r, char currBase)
 {
-  char bases[4] = {'a','c','g','t'};
-  char bases_a[3] = {'c','g','t'};
-  char bases_c[3] = {'a','g','t'};
-  char bases_g[3] = {'a','c','t'};
-  char bases_t[3] = {'a','c','g'};
+  static const char bases[4] = {'a','c','g','t'};
+  static const char alt[4][3] = {
+    {'c','g','t'},  /* alternatives to 'a' */
+    {'a','g','t'},  /* alternatives to 'c' */
+    {'a','c','t'},  /* alternatives to 'g' */
+    {'a','c','g'}   /* alternatives to 't' */
+  };
 
-  if(currBase == 'n')
-    return(bases[gsl_rng_uniform_int(r, 4)]);
-  else
-    if(currBase == 'a')
-      return(bases_a[gsl_rng_uniform_int(r, 3)]);
-    else
-      if(currBase == 'c')
-	return(bases_c[gsl_rng_uniform_int(r, 3)]);
-      else
-	if(currBase == 'g')
-	  return(bases_g[gsl_rng_uniform_int(r, 3)]);
-	else
-	  if(currBase == 't')
-	    return(bases_t[gsl_rng_uniform_int(r, 3)]);
-	  else
-	    {
-	      fprintf(stderr,"Error: base %c unknown!",currBase);
-	      exit(1);
-	    }
+  switch(currBase) {
+    case 'n': return bases[gsl_rng_uniform_int(r, 4)];
+    case 'a': return alt[0][gsl_rng_uniform_int(r, 3)];
+    case 'c': return alt[1][gsl_rng_uniform_int(r, 3)];
+    case 'g': return alt[2][gsl_rng_uniform_int(r, 3)];
+    case 't': return alt[3][gsl_rng_uniform_int(r, 3)];
+    default:
+      fprintf(stderr,"Error: base %c unknown!", currBase);
+      exit(1);
+  }
 }
 
-void getBits(unsigned int value, unsigned int noSamples, unsigned int* result)
-{
-  unsigned int c;
-  unsigned int displaymask = 1 << (noSamples - 1);
+/* Initialize HKY model parameters
+   Precomputes normalized substitution probabilities for efficiency
 
-  for(c=1; c <= noSamples; ++c)
-    {
-      result[c] = value & displaymask ? 1 : 0;
-      value <<= 1;
+   HKY model: P(i->j) proportional to:
+     - kappa * pi_j  for transitions (A<->G, C<->T)
+     - pi_j          for transversions (A<->C, A<->T, G<->C, G<->T)
+*/
+void initHKYParams(hky_params_t* params, double kappa,
+                   double piA, double piC, double piG, double piT)
+{
+  params->kappa = kappa;
+  params->pi[0] = piA;  /* A */
+  params->pi[1] = piC;  /* C */
+  params->pi[2] = piG;  /* G */
+  params->pi[3] = piT;  /* T */
+
+  /* Base indices: A=0, C=1, G=2, T=3
+     Transitions: A<->G (0<->2), C<->T (1<->3)
+
+     For each base, precompute normalized probabilities to other bases */
+
+  /* From A: transition to G (kappa*piG), transversions to C,T (piC, piT) */
+  double sumA = kappa * piG + piC + piT;
+  params->ti_prob[0] = (kappa * piG) / sumA;  /* P(A->G) */
+  params->tv_prob[0][0] = piC / sumA;          /* P(A->C) */
+  params->tv_prob[0][1] = piT / sumA;          /* P(A->T) */
+
+  /* From C: transition to T (kappa*piT), transversions to A,G (piA, piG) */
+  double sumC = kappa * piT + piA + piG;
+  params->ti_prob[1] = (kappa * piT) / sumC;  /* P(C->T) */
+  params->tv_prob[1][0] = piA / sumC;          /* P(C->A) */
+  params->tv_prob[1][1] = piG / sumC;          /* P(C->G) */
+
+  /* From G: transition to A (kappa*piA), transversions to C,T (piC, piT) */
+  double sumG = kappa * piA + piC + piT;
+  params->ti_prob[2] = (kappa * piA) / sumG;  /* P(G->A) */
+  params->tv_prob[2][0] = piC / sumG;          /* P(G->C) */
+  params->tv_prob[2][1] = piT / sumG;          /* P(G->T) */
+
+  /* From T: transition to C (kappa*piC), transversions to A,G (piA, piG) */
+  double sumT = kappa * piC + piA + piG;
+  params->ti_prob[3] = (kappa * piC) / sumT;  /* P(T->C) */
+  params->tv_prob[3][0] = piA / sumT;          /* P(T->A) */
+  params->tv_prob[3][1] = piG / sumT;          /* P(T->G) */
+}
+
+/* HKY substitution: sample new base according to HKY model
+   Transitions (A<->G, C<->T) occur at rate kappa relative to transversions */
+char HKYRBase(gsl_rng * r, char currBase, const hky_params_t* params)
+{
+  double u = gsl_rng_uniform(r);
+  int idx;
+
+  /* Map base to index */
+  switch(currBase) {
+    case 'n': {
+      /* For ancestral base, sample according to equilibrium frequencies */
+      double cumsum = 0;
+      for (int i = 0; i < 4; i++) {
+        cumsum += params->pi[i];
+        if (u < cumsum) {
+          static const char bases[4] = {'a','c','g','t'};
+          return bases[i];
+        }
+      }
+      return 't';  /* fallback due to floating point */
     }
+    case 'a': idx = 0; break;
+    case 'c': idx = 1; break;
+    case 'g': idx = 2; break;
+    case 't': idx = 3; break;
+    default:
+      fprintf(stderr,"Error: base %c unknown!", currBase);
+      exit(1);
+  }
+
+  /* Sample substitution using precomputed probabilities */
+  /* Order: transition first, then transversions */
+  if (u < params->ti_prob[idx]) {
+    /* Transition */
+    static const char ti_target[4] = {'g','t','a','c'};  /* A->G, C->T, G->A, T->C */
+    return ti_target[idx];
+  }
+  u -= params->ti_prob[idx];
+
+  if (u < params->tv_prob[idx][0]) {
+    /* First transversion */
+    static const char tv1_target[4] = {'c','a','c','a'};  /* A->C, C->A, G->C, T->A */
+    return tv1_target[idx];
+  }
+
+  /* Second transversion */
+  static const char tv2_target[4] = {'t','g','t','g'};  /* A->T, C->G, G->T, T->G */
+  return tv2_target[idx];
 }
 
-char** simulateSequences(mutation* mutation_list, int totBases, int noSamples, gsl_rng * r)
+char** simulateSequences(mutation* mutation_list, int totBases, int noSamples,
+                         gsl_rng * r, subst_model_t model, const hky_params_t* hky)
 {
-  unsigned int* ancPops = (unsigned int*) malloc(sizeof(unsigned int)*(noSamples+1));
-  char** sequences = malloc(sizeof(char*)*noSamples);
+  char** sequences = malloc(sizeof(char*) * noSamples);
   mutation* curr_mutList;
-  long currPos=0;
+  long currPos;
   char newBase;
-  
+
+  /* Allocate all sequences */
+  for (int i = 0; i < noSamples; i++)
+    sequences[i] = (char*)malloc(sizeof(char) * totBases);
+
+  /* Generate random ancestral sequence (sample 0) */
+  for (int j = 0; j < totBases; j++) {
+    if (model == SUBST_HKY)
+      sequences[0][j] = HKYRBase(r, 'n', hky);
+    else
+      sequences[0][j] = JC69RBase(r, 'n');
+  }
+
+  /* Copy ancestral to all samples using memcpy */
+  for (int i = 1; i < noSamples; i++)
+    memcpy(sequences[i], sequences[0], totBases);
+
+  /* Apply mutations: use ancestral base, mutate samples with derived allele */
   curr_mutList = mutation_list;
-  for(int i=0; i<noSamples; i++)
-    sequences[i] = (char*)malloc(sizeof(char)*totBases);
-  /* generate base sequences */
-  for(int i=0; i<noSamples; i++)
-    for(int j=0; j<totBases; j++)
-      if(i==0)
-	sequences[i][j] = JC69RBase(r,'n');
-      else
-	sequences[i][j] = sequences[0][j];
-  /* add mutations */
-  while(curr_mutList != NULL)
+  while (curr_mutList != NULL)
     {
-      currPos = POS2BASE(totBases,curr_mutList->location);
-      getBits(curr_mutList->abits,noSamples,ancPops);
-      newBase = JC69RBase(r,sequences[1][currPos]);
-      for(int i=1; i <= noSamples; i++)
-	  if(ancPops[i])
-	      sequences[i-1][currPos] = newBase;
+      currPos = POS2BASE(totBases, curr_mutList->location);
+      /* Get new base from ancestral state (sequences[0]) */
+      if (model == SUBST_HKY)
+        newBase = HKYRBase(r, sequences[0][currPos], hky);
+      else
+        newBase = JC69RBase(r, sequences[0][currPos]);
+      /* Apply to all samples that carry this mutation (bit set in abits) */
+      unsigned int abits = curr_mutList->abits;
+      for (int i = 0; i < noSamples; i++)
+        if (abits & (1u << i))
+          sequences[i][currPos] = newBase;
       curr_mutList = curr_mutList->next;
     }
   return sequences;

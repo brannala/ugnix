@@ -14,6 +14,7 @@ gsl_rng * r;
 /* options */
 int opt_help = 0; /* print help message */
 int opt_default = 0; /* print help message */
+int opt_verbose = 0; /* verbose progress output */
 int prn_chrom = 0; /* print chromosomes */
 int prn_mrca = 0; /* print MRCAs */
 int prn_mutations = 0; /* print mutations */
@@ -24,6 +25,17 @@ int prn_genetrees = 0; /* print gene trees for mrca regions */
 int gtrees_to_stdout = 0; /* print gene trees to stdout */
 int gtrees_to_file = 0; /* print gene trees to output file */
 char version[] = "coalsim";
+
+/* Substitution model settings */
+subst_model_t subst_model = SUBST_JC69;
+double hky_kappa = 2.0;     /* default transition/transversion ratio */
+double hky_piA = 0.25;      /* default base frequencies (equal) */
+double hky_piC = 0.25;
+double hky_piG = 0.25;
+double hky_piT = 0.25;
+
+/* Progress reporting interval (events) */
+#define PROGRESS_INTERVAL 10000
 
 static void print_msg()
 {
@@ -43,7 +55,11 @@ static void print_help()
 	 "-o <sequence output file name>\n"
 	 "-l <print detailed information about mutations>\n"
 	 "-d <print chromosomes>\n"
-	 "-m <mutation rate>\n");
+	 "-m <mutation rate>\n"
+	 "-M <substitution model: JC69 (default) or HKY>\n"
+	 "-k <kappa: transition/transversion ratio for HKY (default 2.0)>\n"
+	 "-p <base frequencies piA,piC,piG,piT for HKY (default 0.25,0.25,0.25,0.25)>\n"
+	 "-v verbose progress output\n");
 }
 
 int main(int argc, char **argv)
@@ -64,7 +80,7 @@ int main(int argc, char **argv)
   const gsl_rng_type * T;
   
 
-  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:g:dlh")) != -1)
+  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:g:M:k:p:dlhv")) != -1)
     switch(c)
       {
       case 'c':
@@ -153,8 +169,48 @@ int main(int argc, char **argv)
       case 'l':
 	prn_mutations = 1;
 	break;
+      case 'M':
+	if (!strcmp("JC69", optarg) || !strcmp("jc69", optarg))
+	  subst_model = SUBST_JC69;
+	else if (!strcmp("HKY", optarg) || !strcmp("hky", optarg))
+	  subst_model = SUBST_HKY;
+	else
+	  {
+	    fprintf(stderr, "Unknown substitution model '%s'. Use JC69 or HKY.\n", optarg);
+	    return 1;
+	  }
+	break;
+      case 'k':
+	hky_kappa = atof(optarg);
+	if (hky_kappa <= 0)
+	  {
+	    fprintf(stderr, "Error: kappa must be positive.\n");
+	    return 1;
+	  }
+	break;
+      case 'p':
+	if (sscanf(optarg, "%lf,%lf,%lf,%lf", &hky_piA, &hky_piC, &hky_piG, &hky_piT) != 4)
+	  {
+	    fprintf(stderr, "Error: base frequencies must be specified as piA,piC,piG,piT\n");
+	    return 1;
+	  }
+	{
+	  double sum = hky_piA + hky_piC + hky_piG + hky_piT;
+	  if (fabs(sum - 1.0) > 0.001)
+	    {
+	      fprintf(stderr, "Warning: base frequencies sum to %.4f, normalizing to 1.0\n", sum);
+	      hky_piA /= sum;
+	      hky_piC /= sum;
+	      hky_piG /= sum;
+	      hky_piT /= sum;
+	    }
+	}
+	break;
       case 'h':
 	opt_help = 1;
+	break;
+      case 'v':
+	opt_verbose = 1;
 	break;
       case '?':
         if (isprint (optopt))
@@ -219,6 +275,12 @@ int main(int argc, char **argv)
       mrca += ipow(2,i);
     }
   long chromTotBases = recRate*100*cMtoMb*1e6;
+
+  /* Initialize HKY parameters if needed */
+  hky_params_t hky_params;
+  if (subst_model == SUBST_HKY)
+    initHKYParams(&hky_params, hky_kappa, hky_piA, hky_piC, hky_piG, hky_piT);
+
   char* baseUnit = malloc(sizeof(char)*5);
   if(seqUnits == 1)
     strcpy(baseUnit,"bps");
@@ -233,11 +295,21 @@ int main(int argc, char **argv)
 
   /* main simulation loop */
   int eventNo = 0;
+  if (opt_verbose)
+    fprintf(stderr, "Starting simulation: n=%d, N=%.0f, r=%.4f, m=%.4f\n",
+            noSamples, popSize, recRate, mutRate);
+
   while((noChrom > 1) && (!TestMRCAForAll(chromSample, mrca)) )
   {
     double prob = 0;
     eventNo++;
-    ancLength = totalAncLength(chromSample);
+
+    /* Progress reporting (only when verbose) */
+    if (opt_verbose && (eventNo % PROGRESS_INTERVAL == 0))
+      fprintf(stderr, "\r  Events: %d | Chrom: %d | Coal: %d | Rec: %d | Mut: %d | Time: %.1f  ",
+              eventNo, noChrom, noCoal, noRec, noMutations, totalTime);
+
+    ancLength = calcAncLength(chromSample);
     assert(ancLength <= noSamples);
     totRate = (noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize))+(recRate +mutRate)*ancLength;
     coalProb = ((noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize)))/totRate;
@@ -290,6 +362,11 @@ int main(int argc, char **argv)
 	}
   }
 
+  /* Final progress message */
+  if (opt_verbose)
+    fprintf(stderr, "\r  Completed: %d events | Coal: %d | Rec: %d | Mut: %d              \n",
+            eventNo, noCoal, noRec, noMutations);
+
   /* summarize run input and output */
   printf("N:%.0f n:%d r:%.2f ",popSize,noSamples,recRate);
   printf("Mutation_Rate: %.3e/Chr",mutRate);
@@ -316,7 +393,8 @@ int main(int argc, char **argv)
 
   if(prn_sequences)
     {
-      sequences = simulateSequences(mutation_list,chromTotBases,noSamples,r);
+      sequences = simulateSequences(mutation_list, chromTotBases, noSamples, r,
+                                    subst_model, &hky_params);
       for(int i=0; i<noSamples; i++)
 	{
 	  fprintf(out_file,">sample%d\n",i);
@@ -391,7 +469,7 @@ int main(int argc, char **argv)
     }
 
   /* clean up memory */
-  delete_sample(chromSample->chrHead);
+  delete_sample(chromSample);
   free(chromSample); 
   free(baseUnit);
   free(outfile);
