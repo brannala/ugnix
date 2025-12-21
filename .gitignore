@@ -1,3 +1,6 @@
 debug/*
 examples/*
 bcft/*
+venv/
+__pycache__/
+*.pyc

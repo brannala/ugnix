@@ -281,31 +281,54 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   /* O(1) deletion using stored index */
   delete_chrom_idx(recEv.chromIdx, chrom);
 
-  /* Verify non-empty ancestry before adding */
+  /* Check for non-empty ancestry before adding each chromosome.
+     Due to floating point precision in getRecEvent, recombination location
+     can occasionally land at segment boundaries, creating chromosomes
+     with no ancestral material. Only add chromosomes with ancestry. */
   currAnc = newLeft->anc;
-  unsigned int sumAnc = 0;
+  unsigned int sumAncLeft = 0;
   while (currAnc != NULL)
     {
-      sumAnc += currAnc->abits;
+      sumAncLeft += currAnc->abits;
       currAnc = currAnc->next;
     }
-  assert(sumAnc != 0);
 
   currAnc = newRight->anc;
-  sumAnc = 0;
+  unsigned int sumAncRight = 0;
   while (currAnc != NULL)
     {
-      sumAnc += currAnc->abits;
+      sumAncRight += currAnc->abits;
       currAnc = currAnc->next;
     }
-  assert(sumAnc != 0);
 
-  /* Append new chromosomes */
-  appendChrom(chrom, newLeft);
-  appendChrom(chrom, newRight);
+  /* Count how many chromosomes we're adding */
+  int added = 0;
+  if (sumAncLeft != 0)
+    {
+      appendChrom(chrom, newLeft);
+      added++;
+    }
+  else
+    {
+      /* Free unused chromosome */
+      delete_anc(newLeft->anc);
+      free(newLeft);
+    }
 
-  /* Net change: -1 (deleted) + 2 (added) = +1 */
-  *noChrom = *noChrom + 1;
+  if (sumAncRight != 0)
+    {
+      appendChrom(chrom, newRight);
+      added++;
+    }
+  else
+    {
+      /* Free unused chromosome */
+      delete_anc(newRight->anc);
+      free(newRight);
+    }
+
+  /* Net change: -1 (deleted) + added */
+  *noChrom = *noChrom + added - 1;
 }
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
