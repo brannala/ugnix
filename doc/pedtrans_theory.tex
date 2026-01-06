@@ -1,0 +1,337 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+
+\title{Pedigree Chromosome Transmission Simulation:\\Theory and Algorithms}
+\author{uGnix Project}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+This document describes the theory and algorithms underlying \texttt{pedtrans}, a program for simulating chromosome transmission through a pedigree with recombination. The simulator tracks the founder chromosome origin of each genomic segment as chromosomes are transmitted from parents to offspring through meiosis.
+
+\section{Input}
+
+The pedigree is specified in a text file with one line per individual:
+\begin{verbatim}
+individualID fatherID motherID
+\end{verbatim}
+Founders (individuals with no parents in the pedigree) have \texttt{fatherID = motherID = 0}.
+
+\section{Biological Model}
+
+\subsection{Diploid Individuals}
+
+Each individual is diploid, carrying two homologous copies of each chromosome:
+\begin{itemize}
+    \item A \emph{paternal} chromosome inherited from the father
+    \item A \emph{maternal} chromosome inherited from the mother
+\end{itemize}
+
+\subsection{Founders}
+
+Founders are the ancestral individuals at the top of the pedigree. Each founder $f$ contributes two distinct chromosomes to the population, denoted:
+\begin{itemize}
+    \item $f_{\text{pat}}$: the founder's paternal chromosome
+    \item $f_{\text{mat}}$: the founder's maternal chromosome
+\end{itemize}
+
+The goal of the simulation is to track which founder chromosome each genomic segment in each descendant originates from.
+
+\subsection{Meiosis and Recombination}
+
+During meiosis, a parent produces a gamete (haploid reproductive cell) containing a single chromosome that is a mosaic of segments from both parental homologs. The process involves:
+
+\begin{enumerate}
+    \item \textbf{Starting homolog selection}: With probability $0.5$, the gamete begins with a segment from either the paternal or maternal chromosome.
+
+    \item \textbf{Recombination (crossover)}: At certain positions along the chromosome, the gamete switches from one parental homolog to the other.
+\end{enumerate}
+
+\section{Recombination Model}
+
+\subsection{Poisson Process}
+
+Following Chakraborty and Rannala (2025), we model recombination as a Poisson process along the chromosome. Let:
+\begin{itemize}
+    \item $r$ = recombination rate (expected number of crossovers per chromosome per meiosis)
+    \item $L$ = chromosome length (normalized to $[0, 1]$)
+\end{itemize}
+
+The number of crossovers $N$ in a single meiosis follows a Poisson distribution:
+\begin{equation}
+    N \sim \text{Poisson}(r)
+\end{equation}
+
+Conditional on $N = n$ crossovers, the positions $X_1, X_2, \ldots, X_n$ are independent and uniformly distributed on $[0, 1]$:
+\begin{equation}
+    X_i \stackrel{\text{iid}}{\sim} \text{Uniform}(0, 1)
+\end{equation}
+
+\subsection{Gamete Formation}
+
+Given the ordered crossover positions $0 < X_{(1)} < X_{(2)} < \cdots < X_{(n)} < 1$, the gamete is constructed as follows:
+
+\begin{enumerate}
+    \item Choose starting homolog $H_0 \in \{0, 1\}$ with equal probability
+    \item For interval $[X_{(i)}, X_{(i+1)})$, use homolog $H_i = (H_0 + i) \mod 2$
+\end{enumerate}
+
+Thus, the gamete alternates between parental homologs at each crossover.
+
+\subsection{Probability of Ancestry Change}
+
+The probability that the ancestry state changes (odd number of recombinations) between two positions at distance $d$ apart is:
+\begin{equation}
+    P(\text{ancestry change}) = \frac{1 - e^{-2rd}}{2}
+\end{equation}
+
+For large $rd$, this approaches $0.5$ (random assignment). For small $rd$, this approaches $rd$ (rare changes).
+
+\section{Data Structures}
+
+\subsection{Chromosome Representation}
+
+A chromosome is represented as an array of contiguous segments, each with a single founder origin:
+
+\begin{equation}
+    \text{Chromosome} = \{(s_i, e_i, f_i, h_i)\}_{i=1}^{k}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $s_i$ = start position of segment $i$ ($s_1 = 0$)
+    \item $e_i$ = end position of segment $i$ ($e_k = 1$, $e_i = s_{i+1}$)
+    \item $f_i$ = founder index
+    \item $h_i \in \{0, 1\}$ = which homolog of founder $f_i$ (paternal or maternal)
+\end{itemize}
+
+\subsection{Founder Origin}
+
+Each segment's origin is specified by a pair $(f, h)$ where:
+\begin{itemize}
+    \item $f \in \{0, 1, \ldots, n_f - 1\}$ is the founder index
+    \item $h \in \{0, 1\}$ specifies paternal (0) or maternal (1) homolog
+\end{itemize}
+
+This allows tracking of $2n_f$ distinct founder chromosomes.
+
+\section{Algorithms}
+
+\subsection{Pedigree Parsing}
+
+For scalability to $10^6+$ individuals, we use single-pass parsing with $O(1)$ hash table lookups:
+
+\begin{algorithm}
+\caption{Parse Pedigree - $O(n)$}
+\begin{algorithmic}[1]
+\Function{ParsePedigree}{file}
+    \State $\text{ped} \gets$ new Pedigree
+    \State $\text{nameToId} \gets$ new HashMap
+    \For{each line ``indiv father mother'' in file}
+        \State $\text{id} \gets$ \Call{GetOrAssignId}{nameToId, indiv}
+        \If{father = ``0'' and mother = ``0''}
+            \State $\text{ped.individuals[id].isFounder} \gets$ true
+            \State $\text{ped.individuals[id].fatherId} \gets -1$
+            \State $\text{ped.individuals[id].motherId} \gets -1$
+        \Else
+            \State $\text{ped.individuals[id].fatherId} \gets$ \Call{GetOrAssignId}{nameToId, father}
+            \State $\text{ped.individuals[id].motherId} \gets$ \Call{GetOrAssignId}{nameToId, mother}
+        \EndIf
+    \EndFor
+    \State \Return ped
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Topological Sort}
+
+To process individuals in correct order (parents before children), we use Kahn's algorithm:
+
+\begin{algorithm}
+\caption{Topological Sort - $O(n)$}
+\begin{algorithmic}[1]
+\Function{TopologicalSort}{ped}
+    \State $\text{inDegree}[i] \gets 0$ for founders, $2$ for non-founders
+    \State $\text{childList}[i] \gets$ list of children of individual $i$
+    \State $Q \gets$ queue of all founders (inDegree = 0)
+    \State $\text{order} \gets$ empty list
+    \While{$Q$ not empty}
+        \State $i \gets$ dequeue from $Q$
+        \State append $i$ to order
+        \For{each child $c$ of $i$}
+            \State $\text{inDegree}[c] \gets \text{inDegree}[c] - 1$
+            \If{$\text{inDegree}[c] = 0$}
+                \State enqueue $c$ to $Q$
+            \EndIf
+        \EndFor
+    \EndWhile
+    \State \Return order
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Complexity}: $O(n + m)$ where $m$ is the number of parent-child edges. Since each individual has at most 2 parents, $m \leq 2n$, so complexity is $O(n)$.
+
+\subsection{Meiosis Simulation}
+
+\begin{algorithm}
+\caption{Meiosis - $O(k + n\log n)$ where $k$ = parent segments, $n$ = crossovers}
+\begin{algorithmic}[1]
+\Function{Meiosis}{paternal, maternal, recRate, rng}
+    \State $n \gets$ \Call{PoissonRandom}{recRate, rng}
+    \State $\text{breakpoints} \gets [0]$
+    \For{$i = 1$ to $n$}
+        \State append \Call{UniformRandom}{0, 1, rng} to breakpoints
+    \EndFor
+    \State append $1$ to breakpoints
+    \State sort breakpoints
+    \State $\text{source} \gets$ \Call{BernoulliRandom}{0.5, rng} \Comment{0 = paternal, 1 = maternal}
+    \State $\text{gamete} \gets$ new Chromosome
+    \For{$i = 0$ to $n$}
+        \State $\text{start} \gets \text{breakpoints}[i]$
+        \State $\text{end} \gets \text{breakpoints}[i+1]$
+        \If{source = 0}
+            \State \Call{CopySegmentsInRange}{gamete, paternal, start, end}
+        \Else
+            \State \Call{CopySegmentsInRange}{gamete, maternal, start, end}
+        \EndIf
+        \State $\text{source} \gets 1 - \text{source}$ \Comment{Alternate at each crossover}
+    \EndFor
+    \State \Call{MergeAdjacentSegments}{gamete}
+    \State \Return gamete
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Copy Segments in Range}
+
+\begin{algorithm}
+\caption{Copy Segments in Range - $O(k)$ where $k$ = segments in source}
+\begin{algorithmic}[1]
+\Function{CopySegmentsInRange}{dest, source, rangeStart, rangeEnd}
+    \For{each segment $(s, e, f, h)$ in source}
+        \If{$e > \text{rangeStart}$ and $s < \text{rangeEnd}$}
+            \State $s' \gets \max(s, \text{rangeStart})$
+            \State $e' \gets \min(e, \text{rangeEnd})$
+            \State \Call{AddSegment}{dest, $s'$, $e'$, $f$, $h$}
+        \EndIf
+    \EndFor
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Merge Adjacent Segments}
+
+Adjacent segments with identical founder origin are merged:
+
+\begin{algorithm}
+\caption{Merge Adjacent Segments - $O(k)$}
+\begin{algorithmic}[1]
+\Function{MergeAdjacentSegments}{chromosome}
+    \State $i \gets 0$
+    \While{$i < \text{chromosome.nSegments} - 1$}
+        \If{chromosome.segments[$i$].origin = chromosome.segments[$i+1$].origin}
+            \State chromosome.segments[$i$].end $\gets$ chromosome.segments[$i+1$].end
+            \State remove segment $i+1$
+        \Else
+            \State $i \gets i + 1$
+        \EndIf
+    \EndWhile
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\section{Main Simulation}
+
+\begin{algorithm}
+\caption{Simulate Pedigree Transmission}
+\begin{algorithmic}[1]
+\Function{SimulatePedigree}{pedFile, recRate, seed}
+    \State $\text{ped} \gets$ \Call{ParsePedigree}{pedFile}
+    \State $\text{order} \gets$ \Call{TopologicalSort}{ped}
+    \State Initialize random number generator with seed
+    \State Allocate chromosomes array for all individuals
+    \For{each individual $i$ in order}
+        \If{$i$ is founder}
+            \State $\text{chromosomes}[i].\text{paternal} \gets$ \Call{CreateFounderChromosome}{$i$, 0}
+            \State $\text{chromosomes}[i].\text{maternal} \gets$ \Call{CreateFounderChromosome}{$i$, 1}
+        \Else
+            \State $f \gets$ father of $i$
+            \State $m \gets$ mother of $i$
+            \State $\text{chromosomes}[i].\text{paternal} \gets$ \Call{Meiosis}{chromosomes[$f$].paternal, chromosomes[$f$].maternal, recRate, rng}
+            \State $\text{chromosomes}[i].\text{maternal} \gets$ \Call{Meiosis}{chromosomes[$m$].paternal, chromosomes[$m$].maternal, recRate, rng}
+        \EndIf
+    \EndFor
+    \State \Return simulation
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\section{Complexity Analysis}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|c|l|}
+\hline
+\textbf{Operation} & \textbf{Complexity} & \textbf{Notes} \\
+\hline
+Parse pedigree & $O(n)$ & Single pass + hash table \\
+Topological sort & $O(n)$ & Kahn's algorithm \\
+Initialize founders & $O(n_f)$ & One segment per chromosome \\
+Meiosis & $O(k + r\log r)$ & $k$ = parent segments, $r$ = crossovers \\
+Total simulation & $O(n \cdot \bar{k})$ & $\bar{k}$ = average segments \\
+Memory & $O(n \cdot \bar{k})$ & Array storage \\
+\hline
+\end{tabular}
+\caption{Complexity summary}
+\end{table}
+
+For a pedigree with $n = 10^6$ individuals and average $\bar{k} = 50$ segments per chromosome:
+\begin{itemize}
+    \item Operations: $\approx 5 \times 10^7$ segment operations
+    \item Memory: $\approx 400$ MB (assuming 8 bytes per segment)
+    \item Expected runtime: seconds to minutes
+\end{itemize}
+
+\section{Output Format}
+
+The simulator outputs the founder origin of each chromosomal segment for each individual:
+
+\begin{verbatim}
+# pedtrans output
+# RecRate: 1.0 Seed: 12345
+# Founders: F1 F2 F3 F4
+#
+Individual: child1
+  Paternal:
+    0.000000 0.234521 F1:pat
+    0.234521 0.567823 F2:mat
+    0.567823 1.000000 F1:pat
+  Maternal:
+    0.000000 0.789012 F3:pat
+    0.789012 1.000000 F4:mat
+\end{verbatim}
+
+Each line within a chromosome specifies:
+\begin{itemize}
+    \item Start position (normalized to $[0, 1]$)
+    \item End position
+    \item Founder name
+    \item Homolog (pat = paternal, mat = maternal)
+\end{itemize}
+
+\section{References}
+
+\begin{enumerate}
+    \item Chakraborty S, Rannala B. (2025). Improved Bayesian inference of hybrids using genome sequences. bioRxiv preprint.
+\end{enumerate}
+
+\end{document}

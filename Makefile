@@ -8,7 +8,7 @@ PROFILE = -g
 
 # build programs
 
-all: hwe-dis kinship gsum het coalsim
+all: hwe-dis kinship gsum het coalsim pedtrans
 hwe-dis: hwe-dis.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) hwe-dis.o uGnix.o -lglib-2.0 -lm -o hwe-dis
 kinship: kinship.o data.o uGnix.o -lglib-2.0
@@ -33,17 +33,23 @@ coalsim.o: coalsim.c uGnix.h coalescent.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 coalescent.o: coalescent.c uGnix.h coalescent.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedtrans: pedtrans_main.o pedtrans.o -lglib-2.0 -lgsl -lgslcblas
+	$(CC) $(PROFILE) pedtrans_main.o pedtrans.o -lglib-2.0 -lm -lgsl -lgslcblas -o pedtrans
+pedtrans_main.o: pedtrans_main.c pedtrans.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedtrans.o: pedtrans.c pedtrans.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis
-	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o
+	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans
+	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o
 tidy:
 	$(RM) *.o
 
 # build test suite
 
-tests: test_ugnix test_coalescent runtests
+tests: test_ugnix test_coalescent test_pedtrans runtests
 test_ugnix: test_ugnix.o uGnix.o unity.o -lglib-2.0
 	$(CC) $(PROFILE) test_ugnix.o uGnix.o unity.o -lglib-2.0 -lm -o test_ugnix
 test_ugnix.o: test_ugnix.c uGnix.h unity.h
@@ -54,16 +60,23 @@ test_coalescent: test_coalescent.o coalescent.o uGnix.o unity.o -lglib-2.0 -lm -
 	$(CC) $(PROFILE) test_coalescent.o coalescent.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_coalescent
 test_coalescent.o: test_coalescent.c coalescent.h uGnix.h unity.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
+test_pedtrans: test_pedtrans.o pedtrans.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas
+	$(CC) $(PROFILE) test_pedtrans.o pedtrans.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_pedtrans
+test_pedtrans.o: test_pedtrans.c pedtrans.h unity.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
 runtests:
 	@eval $$(echo "#!/bin/bash" > runtests)
 	@eval $$(echo "echo \"\nRunning tests on ugnix.c ...\"" >> runtests)
 	@eval $$(echo "./test_ugnix" >> runtests)
 	@eval $$(echo "echo \"\nRunning tests on coalescent.c ...\"" >> runtests)
 	@eval $$(echo "./test_coalescent" >>runtests)
+	@eval $$(echo "echo \"\nRunning tests on pedtrans.c ...\"" >> runtests)
+	@eval $$(echo "./test_pedtrans" >>runtests)
 	@eval $$(chmod +x runtests) 	
 testsclean:
 	$(RM) test_ugnix
 	$(RM) test_coalescent
+	$(RM) test_pedtrans
 	$(RM) runtests
-	$(RM) test_ugnix.o unity.o uGnix.o test_coalescent.o coalescent.o
+	$(RM) test_ugnix.o unity.o uGnix.o test_coalescent.o coalescent.o test_pedtrans.o pedtrans.o
 

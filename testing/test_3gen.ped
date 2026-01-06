@@ -1,0 +1,8 @@
+GF1 0 0
+GM1 0 0
+GF2 0 0
+GM2 0 0
+Father GF1 GM1
+Mother GF2 GM2
+Child1 Father Mother
+Child2 Father Mother

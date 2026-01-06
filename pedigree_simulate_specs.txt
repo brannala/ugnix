@@ -1,0 +1,6 @@
+A program written in C for reading in a pedigree with multiple entries in the following format:
+
+indivID fatherID motherID
+
+If an individual is a founder then its motherID = fatherID = 0.
+The program will simulate transmission of chromosome down the pedigree starting with the chromosomes of the founders. The initial prototype will simulate a single pair of homologous chromosomes for each individual but the end goal is to simulate multiple chromsomes. Recombination will be modeled using the same model of recombination at each meiotic event as is described in the paper 2025.12.26.696621.full.pdf found in this repository. However, rather than modeling recombination between specific markers we will model recombination at individual sites across the genome and track the founder source of each site in each individual. Go into planning mode and develop a plan for this program,
