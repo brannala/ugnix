@@ -185,6 +185,10 @@ char HKYRBase(gsl_rng * r, char currBase, const hky_params_t* params);
 char** simulateSequences(mutation* mutation_list, int totBases, int noSamples,
                          gsl_rng * r, subst_model_t model, const hky_params_t* hky);
 
+/* VCF output - writes only variable sites (memory efficient) */
+void writeVCF(mutation* mutation_list, long chromTotBases, int noSamples,
+              const bitarray* mrca, FILE* out, gsl_rng* r);
+
 /* Deprecated: use bitarray functions instead */
 void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);
 

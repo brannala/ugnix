@@ -1122,6 +1122,62 @@ void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
     }
 }
 
+/*
+ * Write mutations as VCF format.
+ * Much more memory efficient than full sequences for large sample sizes.
+ */
+void writeVCF(mutation* mutation_list, long chromTotBases, int noSamples,
+              const bitarray* mrca, FILE* out, gsl_rng* r)
+{
+    /* Write VCF header */
+    fprintf(out, "##fileformat=VCFv4.2\n");
+    fprintf(out, "##source=coalsim\n");
+    fprintf(out, "##contig=<ID=chr1,length=%ld>\n", chromTotBases);
+    fprintf(out, "##INFO=<ID=AGE,Number=1,Type=Float,Description=\"Mutation age in generations\">\n");
+    fprintf(out, "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n");
+    fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+
+    /* Write sample names (haplotypes) */
+    for (int i = 0; i < noSamples; i++) {
+        fprintf(out, "\tsample%d", i);
+    }
+    fprintf(out, "\n");
+
+    /* Bases for REF/ALT - ancestral is A, derived is random from {C,G,T} */
+    char alt_bases[] = "CGT";
+
+    /* Write each mutation as a VCF record */
+    mutation* mut = mutation_list;
+    while (mut != NULL) {
+        /* Skip if mutation is at MRCA (all samples have it = not polymorphic) */
+        if (bitarray_equal(mut->abits, mrca)) {
+            mut = mut->next;
+            continue;
+        }
+
+        /* Calculate base position (1-based for VCF) */
+        long pos = (long)(mut->location * chromTotBases) + 1;
+        if (pos < 1) pos = 1;
+        if (pos > chromTotBases) pos = chromTotBases;
+
+        /* Pick random alternate base */
+        char alt = alt_bases[gsl_rng_uniform_int(r, 3)];
+
+        /* Write VCF record */
+        fprintf(out, "chr1\t%ld\t.\tA\t%c\t.\tPASS\tAGE=%.2f\tGT",
+                pos, alt, mut->age);
+
+        /* Write genotypes for each sample */
+        for (int i = 0; i < noSamples; i++) {
+            int has_mut = bitarray_test(mut->abits, i);
+            fprintf(out, "\t%d", has_mut);
+        }
+        fprintf(out, "\n");
+
+        mut = mut->next;
+    }
+}
+
 void printChromosomes(chrsample* chromSample, int noSamples)
 {
   ancestry* tmp = NULL;

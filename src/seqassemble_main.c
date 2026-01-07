@@ -27,6 +27,7 @@ static void print_usage(const char* program_name) {
     fprintf(stderr, "  -o FILE    Output file (default: stdout)\n");
     fprintf(stderr, "  -f FORMAT  Output format: fasta (default) or vcf\n");
     fprintf(stderr, "  -s         Samples only (exclude founders from output)\n");
+    fprintf(stderr, "  -m         Memory-efficient streaming mode (for large datasets)\n");
     fprintf(stderr, "  -v         Verbose output\n");
     fprintf(stderr, "  -h         Show this help message\n");
     fprintf(stderr, "\n");
@@ -62,11 +63,12 @@ int main(int argc, char* argv[]) {
     const char* output_file = NULL;
     const char* format = "fasta";
     int samples_only = 0;
+    int streaming_mode = 0;
     int verbose = 0;
 
     /* Parse command line options */
     int opt;
-    while ((opt = getopt(argc, argv, "o:f:svh")) != -1) {
+    while ((opt = getopt(argc, argv, "o:f:smvh")) != -1) {
         switch (opt) {
             case 'o':
                 output_file = optarg;
@@ -81,6 +83,9 @@ int main(int argc, char* argv[]) {
                 break;
             case 's':
                 samples_only = 1;
+                break;
+            case 'm':
+                streaming_mode = 1;
                 break;
             case 'v':
                 verbose = 1;
@@ -137,69 +142,105 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "  Founders: %d\n", pd->n_founders);
     }
 
-    /* Read founder sequences */
-    if (verbose) {
-        fprintf(stderr, "Reading founder sequences...\n");
-    }
-
-    founder_sequences* fs = create_founder_sequences();
-    if (!fs) {
-        fprintf(stderr, "Error: Failed to allocate founder sequences\n");
-        free_pedtrans_data(pd);
-        return 1;
-    }
-
-    if (read_founder_fasta(fs, founders_file,
-                           (const char**)pd->founder_names, pd->n_founders) != 0) {
-        fprintf(stderr, "Error: Failed to read founder sequences\n");
-        free_founder_sequences(fs);
-        free_pedtrans_data(pd);
-        return 1;
-    }
-
-    if (verbose) {
-        fprintf(stderr, "  Sequence length: %ld bp\n", fs->seq_length);
-        fprintf(stderr, "  Founders with sequences: %d\n", fs->n_founders);
-    }
-
     /* Open output file */
     FILE* out = stdout;
     if (output_file) {
         out = fopen(output_file, "w");
         if (!out) {
             fprintf(stderr, "Error: Cannot open output file '%s'\n", output_file);
-            free_founder_sequences(fs);
             free_pedtrans_data(pd);
             return 1;
         }
     }
 
-    /* Assemble and output sequences */
-    if (verbose) {
-        fprintf(stderr, "Assembling sequences...\n");
-    }
+    int result = 0;
 
-    int result;
-    if (strcmp(format, "vcf") == 0) {
-        result = write_vcf_output(pd, fs, out, samples_only);
-    } else {
-        result = assemble_all_sequences(pd, fs, out, samples_only);
-    }
-
-    if (result != 0) {
-        fprintf(stderr, "Error: Failed to assemble sequences\n");
-    } else if (verbose) {
-        fprintf(stderr, "Done.\n");
-        if (output_file) {
-            fprintf(stderr, "Output written to %s\n", output_file);
+    if (streaming_mode && strcmp(format, "fasta") == 0) {
+        /* Streaming mode - memory efficient for large datasets */
+        if (verbose) {
+            fprintf(stderr, "Indexing founder sequences (streaming mode)...\n");
         }
+
+        fasta_index* idx = create_fasta_index(founders_file,
+                                               (const char**)pd->founder_names,
+                                               pd->n_founders);
+        if (!idx) {
+            fprintf(stderr, "Error: Failed to index founder sequences\n");
+            if (output_file) fclose(out);
+            free_pedtrans_data(pd);
+            return 1;
+        }
+
+        if (verbose) {
+            fprintf(stderr, "  Sequence length: %ld bp\n", idx->seq_length);
+            fprintf(stderr, "  Indexed entries: %d\n", idx->n_entries);
+            fprintf(stderr, "Assembling sequences (streaming)...\n");
+        }
+
+        result = assemble_all_sequences_streaming(pd, idx, out, samples_only);
+
+        if (result != 0) {
+            fprintf(stderr, "Error: Failed to assemble sequences\n");
+        } else if (verbose) {
+            fprintf(stderr, "Done.\n");
+            if (output_file) {
+                fprintf(stderr, "Output written to %s\n", output_file);
+            }
+        }
+
+        free_fasta_index(idx);
+
+    } else {
+        /* In-memory mode (default) */
+        if (verbose) {
+            fprintf(stderr, "Reading founder sequences...\n");
+        }
+
+        founder_sequences* fs = create_founder_sequences();
+        if (!fs) {
+            fprintf(stderr, "Error: Failed to allocate founder sequences\n");
+            if (output_file) fclose(out);
+            free_pedtrans_data(pd);
+            return 1;
+        }
+
+        if (read_founder_fasta(fs, founders_file,
+                               (const char**)pd->founder_names, pd->n_founders) != 0) {
+            fprintf(stderr, "Error: Failed to read founder sequences\n");
+            free_founder_sequences(fs);
+            if (output_file) fclose(out);
+            free_pedtrans_data(pd);
+            return 1;
+        }
+
+        if (verbose) {
+            fprintf(stderr, "  Sequence length: %ld bp\n", fs->seq_length);
+            fprintf(stderr, "  Founders with sequences: %d\n", fs->n_founders);
+            fprintf(stderr, "Assembling sequences...\n");
+        }
+
+        if (strcmp(format, "vcf") == 0) {
+            result = write_vcf_output(pd, fs, out, samples_only);
+        } else {
+            result = assemble_all_sequences(pd, fs, out, samples_only);
+        }
+
+        if (result != 0) {
+            fprintf(stderr, "Error: Failed to assemble sequences\n");
+        } else if (verbose) {
+            fprintf(stderr, "Done.\n");
+            if (output_file) {
+                fprintf(stderr, "Output written to %s\n", output_file);
+            }
+        }
+
+        free_founder_sequences(fs);
     }
 
     /* Cleanup */
     if (output_file) {
         fclose(out);
     }
-    free_founder_sequences(fs);
     free_pedtrans_data(pd);
 
     return result;

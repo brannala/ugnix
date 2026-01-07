@@ -13,7 +13,205 @@
 
 /*
  * ============================================================================
- * Founder Sequence Functions
+ * FASTA Index Functions (Streaming Mode)
+ * ============================================================================
+ */
+
+fasta_index* create_fasta_index(const char* filename,
+                                 const char** founder_names, int n_founders) {
+    FILE* fp = fopen(filename, "r");
+    if (!fp) {
+        fprintf(stderr, "Error: Cannot open FASTA file '%s'\n", filename);
+        return NULL;
+    }
+
+    fasta_index* idx = malloc(sizeof(fasta_index));
+    if (!idx) {
+        fclose(fp);
+        return NULL;
+    }
+
+    idx->capacity = n_founders * 2 + 16;
+    idx->entries = malloc(idx->capacity * sizeof(fasta_index_entry));
+    if (!idx->entries) {
+        free(idx);
+        fclose(fp);
+        return NULL;
+    }
+
+    idx->n_entries = 0;
+    idx->fp = fp;
+    idx->filename = strdup(filename);
+    idx->seq_length = 0;
+
+    /* Scan file to build index */
+    char line[MAX_LINE_LENGTH];
+    fasta_index_entry* current = NULL;
+    long seq_bases = 0;
+    int line_width = 0;
+    int sample_counter = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        int len = strlen(line);
+
+        if (line[0] == '>') {
+            /* Finalize previous entry */
+            if (current) {
+                current->seq_length = seq_bases;
+                current->line_width = line_width;
+                if (idx->seq_length == 0) {
+                    idx->seq_length = seq_bases;
+                }
+            }
+
+            /* Parse header */
+            /* Remove trailing whitespace */
+            while (len > 0 && isspace(line[len-1])) {
+                line[--len] = '\0';
+            }
+
+            char* header = line + 1;  /* skip '>' */
+            char founder[MAX_NAME_LENGTH];
+            int homolog = 0;
+
+            /* Try "FounderName:pat" or "FounderName:mat" format */
+            char* colon = strchr(header, ':');
+            if (colon) {
+                *colon = '\0';
+                strncpy(founder, header, MAX_NAME_LENGTH - 1);
+                founder[MAX_NAME_LENGTH - 1] = '\0';
+                if (strcmp(colon + 1, "mat") == 0) {
+                    homolog = 1;
+                }
+            } else {
+                /* Try "sample0", "sample1" format */
+                int sample_idx = -1;
+                if (sscanf(header, "sample%d", &sample_idx) == 1) {
+                    int founder_idx = sample_idx / 2;
+                    homolog = sample_idx % 2;
+                    if (founder_idx < n_founders && founder_names) {
+                        strncpy(founder, founder_names[founder_idx], MAX_NAME_LENGTH - 1);
+                        founder[MAX_NAME_LENGTH - 1] = '\0';
+                    } else {
+                        snprintf(founder, MAX_NAME_LENGTH, "founder%d", founder_idx);
+                    }
+                } else {
+                    /* Use as-is, assign to founders in order */
+                    int founder_idx = sample_counter / 2;
+                    homolog = sample_counter % 2;
+                    if (founder_idx < n_founders && founder_names) {
+                        strncpy(founder, founder_names[founder_idx], MAX_NAME_LENGTH - 1);
+                        founder[MAX_NAME_LENGTH - 1] = '\0';
+                    } else {
+                        strncpy(founder, header, MAX_NAME_LENGTH - 1);
+                        founder[MAX_NAME_LENGTH - 1] = '\0';
+                    }
+                    sample_counter++;
+                }
+            }
+
+            /* Add new entry */
+            if (idx->n_entries >= idx->capacity) {
+                idx->capacity *= 2;
+                idx->entries = realloc(idx->entries,
+                                        idx->capacity * sizeof(fasta_index_entry));
+            }
+
+            current = &idx->entries[idx->n_entries++];
+            strncpy(current->founder, founder, MAX_NAME_LENGTH - 1);
+            current->founder[MAX_NAME_LENGTH - 1] = '\0';
+            current->homolog = homolog;
+            current->file_offset = ftell(fp);  /* position after header */
+            current->seq_length = 0;
+            current->line_width = 0;
+
+            seq_bases = 0;
+            line_width = 0;
+
+        } else if (line[0] != '\0' && line[0] != '#') {
+            /* Sequence line */
+            /* Remove newline for counting */
+            while (len > 0 && isspace(line[len-1])) {
+                len--;
+            }
+            seq_bases += len;
+            if (line_width == 0 && len > 0) {
+                line_width = len;  /* assume consistent line width */
+            }
+        }
+    }
+
+    /* Finalize last entry */
+    if (current) {
+        current->seq_length = seq_bases;
+        current->line_width = line_width;
+        if (idx->seq_length == 0) {
+            idx->seq_length = seq_bases;
+        }
+    }
+
+    return idx;
+}
+
+void free_fasta_index(fasta_index* idx) {
+    if (!idx) return;
+    if (idx->fp) fclose(idx->fp);
+    free(idx->filename);
+    free(idx->entries);
+    free(idx);
+}
+
+static fasta_index_entry* find_index_entry(fasta_index* idx,
+                                            const char* founder, int homolog) {
+    for (int i = 0; i < idx->n_entries; i++) {
+        if (strcmp(idx->entries[i].founder, founder) == 0 &&
+            idx->entries[i].homolog == homolog) {
+            return &idx->entries[i];
+        }
+    }
+    return NULL;
+}
+
+int read_sequence_range(fasta_index* idx, const char* founder,
+                        int homolog, long start, long end, char* buffer) {
+    fasta_index_entry* entry = find_index_entry(idx, founder, homolog);
+    if (!entry) {
+        fprintf(stderr, "Warning: No index entry for %s:%s\n",
+                founder, homolog == 0 ? "pat" : "mat");
+        return -1;
+    }
+
+    if (start < 0) start = 0;
+    if (end > entry->seq_length) end = entry->seq_length;
+    if (start >= end) return 0;
+
+    long range_len = end - start;
+
+    /* Calculate file position accounting for newlines */
+    int line_width = entry->line_width > 0 ? entry->line_width : 80;
+    long start_line = start / line_width;
+    long start_col = start % line_width;
+
+    /* Seek to approximate position (start of the line containing start) */
+    /* Each line has line_width chars + 1 newline */
+    long file_pos = entry->file_offset + start_line * (line_width + 1) + start_col;
+    fseek(idx->fp, file_pos, SEEK_SET);
+
+    /* Read bases, skipping newlines */
+    long bases_read = 0;
+    int c;
+    while (bases_read < range_len && (c = fgetc(idx->fp)) != EOF) {
+        if (c == '\n' || c == '\r') continue;
+        if (c == '>') break;  /* hit next sequence */
+        buffer[bases_read++] = (char)c;
+    }
+
+    return (int)bases_read;
+}
+
+/*
+ * ============================================================================
+ * Founder Sequence Functions (In-Memory Mode)
  * ============================================================================
  */
 
@@ -489,6 +687,133 @@ int assemble_all_sequences(pedtrans_data* pd, founder_sequences* fs,
             }
             free(mat_seq);
         }
+    }
+
+    return 0;
+}
+
+/*
+ * Streaming assembly - writes one chromosome at a time, reading
+ * founder sequences on demand from indexed FASTA file.
+ */
+static void write_chromosome_streaming(parsed_chromosome* chr,
+                                        fasta_index* idx,
+                                        const char* indiv_name,
+                                        const char* homolog_name,
+                                        FILE* out) {
+    long seq_length = idx->seq_length;
+
+    /* Write FASTA header */
+    fprintf(out, ">%s:%s\n", indiv_name, homolog_name);
+
+    /* Buffer for reading segments - sized for one output line */
+    #define STREAM_LINE_WIDTH 80
+    #define STREAM_BUFFER_SIZE 4096
+
+    char buffer[STREAM_BUFFER_SIZE];
+    char line_buffer[STREAM_LINE_WIDTH + 1];
+    int line_pos = 0;
+
+    /* Process sequence position by position through segments */
+    long pos = 0;
+    int seg_idx = 0;
+
+    while (pos < seq_length) {
+        /* Find segment containing this position */
+        while (seg_idx < chr->n_segments - 1 &&
+               chr->segments[seg_idx].end * seq_length <= pos) {
+            seg_idx++;
+        }
+
+        parsed_segment* seg = NULL;
+        if (seg_idx < chr->n_segments) {
+            seg = &chr->segments[seg_idx];
+        }
+
+        /* Calculate how many bases we can read from this segment */
+        long seg_start_bp = seg ? (long)(seg->start * seq_length) : seq_length;
+        long seg_end_bp = seg ? (long)(seg->end * seq_length) : seq_length;
+
+        /* Handle gap before segment (fill with N) */
+        while (pos < seg_start_bp && pos < seq_length) {
+            line_buffer[line_pos++] = 'N';
+            if (line_pos >= STREAM_LINE_WIDTH) {
+                line_buffer[line_pos] = '\0';
+                fprintf(out, "%s\n", line_buffer);
+                line_pos = 0;
+            }
+            pos++;
+        }
+
+        /* Read from segment */
+        if (seg && pos < seg_end_bp) {
+            long chunk_start = pos;
+            long chunk_end = seg_end_bp;
+            if (chunk_end > seq_length) chunk_end = seq_length;
+
+            /* Read in chunks */
+            while (chunk_start < chunk_end) {
+                long read_len = chunk_end - chunk_start;
+                if (read_len > STREAM_BUFFER_SIZE) {
+                    read_len = STREAM_BUFFER_SIZE;
+                }
+
+                int bytes_read = read_sequence_range(idx, seg->founder,
+                                                      seg->homolog,
+                                                      chunk_start, chunk_start + read_len,
+                                                      buffer);
+                if (bytes_read <= 0) {
+                    /* Fill with N on error */
+                    for (long j = 0; j < read_len; j++) {
+                        line_buffer[line_pos++] = 'N';
+                        if (line_pos >= STREAM_LINE_WIDTH) {
+                            line_buffer[line_pos] = '\0';
+                            fprintf(out, "%s\n", line_buffer);
+                            line_pos = 0;
+                        }
+                    }
+                } else {
+                    /* Write read bases */
+                    for (int j = 0; j < bytes_read; j++) {
+                        line_buffer[line_pos++] = buffer[j];
+                        if (line_pos >= STREAM_LINE_WIDTH) {
+                            line_buffer[line_pos] = '\0';
+                            fprintf(out, "%s\n", line_buffer);
+                            line_pos = 0;
+                        }
+                    }
+                }
+
+                chunk_start += read_len;
+                pos = chunk_start;
+            }
+        }
+    }
+
+    /* Write any remaining bases in line buffer */
+    if (line_pos > 0) {
+        line_buffer[line_pos] = '\0';
+        fprintf(out, "%s\n", line_buffer);
+    }
+}
+
+int assemble_all_sequences_streaming(pedtrans_data* pd, fasta_index* idx,
+                                      FILE* out, int samples_only) {
+    for (int i = 0; i < pd->n_individuals; i++) {
+        parsed_individual* indiv = &pd->individuals[i];
+
+        /* Skip founders if samples_only is set */
+        if (samples_only && indiv->is_founder) {
+            continue;
+        }
+
+        /* Assemble and write paternal chromosome */
+        write_chromosome_streaming(&indiv->paternal, idx,
+                                    indiv->name, "pat", out);
+
+        /* Assemble and write maternal chromosome */
+        write_chromosome_streaming(&indiv->maternal, idx,
+                                    indiv->name, "mat", out);
     }
 
     return 0;

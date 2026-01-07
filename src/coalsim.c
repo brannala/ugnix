@@ -21,6 +21,7 @@ int prn_mutations = 0; /* print mutations */
 int prn_regions = 0; /* print all mrca regions */
 int calc_mrca = 0; /* do mrca calculations */
 int prn_sequences = 0; /* print sequence data to output file */
+int prn_vcf = 0; /* print VCF output (variable sites only) */
 int prn_genetrees = 0; /* print gene trees for mrca regions */
 int gtrees_to_stdout = 0; /* print gene trees to stdout */
 int gtrees_to_file = 0; /* print gene trees to output file */
@@ -52,7 +53,8 @@ static void print_help()
 	 "-u <specify scaling for bases: Mb Kb b>\n"
 	 "-a <output mrca information: r=regions i=intervals s=summary>\n"
 	 "-g <print gene trees for mrca regions s=screen f=file>\n"
-	 "-o <sequence output file name>\n"
+	 "-o <sequence output file name (FASTA format)>\n"
+	 "-V <VCF output file name (variable sites only, memory efficient)>\n"
 	 "-l <print detailed information about mutations>\n"
 	 "-d <print chromosomes>\n"
 	 "-m <mutation rate>\n"
@@ -69,7 +71,9 @@ int main(int argc, char **argv)
   double popSize = 1000;
   double recRate = 0.05;
   double mutRate = 0.5;
-  char* outfile = malloc(sizeof(char)*30);
+  char* outfile = malloc(sizeof(char)*256);
+  char* vcffile = malloc(sizeof(char)*256);
+  FILE* vcf_file = NULL;
   unsigned int noSamples=4;
   unsigned int RGSeed=0;
   char* endPtr;
@@ -80,7 +84,7 @@ int main(int argc, char **argv)
   const gsl_rng_type * T;
   
 
-  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:g:M:k:p:dlhv")) != -1)
+  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:V:g:M:k:p:dlhv")) != -1)
     switch(c)
       {
       case 'c':
@@ -138,11 +142,21 @@ int main(int argc, char **argv)
 	break;
       case 'o':
 	prn_sequences = 1;
-	strncpy(outfile,optarg,30);
+	strncpy(outfile,optarg,255);
 	out_file = fopen(outfile,"w");
 	if(out_file == NULL)
 	  {
 	    fprintf(stderr, "Error: failed to open output file %s\n",outfile);
+	    exit(1);
+	  }
+	break;
+      case 'V':
+	prn_vcf = 1;
+	strncpy(vcffile,optarg,255);
+	vcf_file = fopen(vcffile,"w");
+	if(vcf_file == NULL)
+	  {
+	    fprintf(stderr, "Error: failed to open VCF output file %s\n",vcffile);
 	    exit(1);
 	  }
 	break;
@@ -393,6 +407,12 @@ int main(int argc, char **argv)
       printMutations(mutation_list,chromTotBases,seqUnits,baseUnit,noSamples,mrca);
     }
 
+  if(prn_vcf)
+    {
+      writeVCF(mutation_list, chromTotBases, noSamples, mrca, vcf_file, r);
+      printf("VCF output written to %s (%d variable sites)\n", vcffile, noMutations);
+    }
+
   if(prn_sequences)
     {
       sequences = simulateSequences(mutation_list, chromTotBases, noSamples, r,
@@ -475,6 +495,7 @@ int main(int argc, char **argv)
   free(chromSample); 
   free(baseUnit);
   free(outfile);
+  free(vcffile);
   mutation* mcurr = mutation_list;
   while(mutation_list != NULL)
     {
@@ -502,6 +523,8 @@ int main(int argc, char **argv)
 
   if(out_file != NULL)
     fclose(out_file);
+  if(vcf_file != NULL)
+    fclose(vcf_file);
   if(tree_file != NULL)
     fclose(tree_file);
   if(mrca_file !=NULL)

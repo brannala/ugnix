@@ -82,7 +82,56 @@ typedef struct {
 
 /*
  * ============================================================================
- * Founder Sequence Functions
+ * FASTA Index for Streaming (Memory-Efficient Mode)
+ * ============================================================================
+ */
+
+/*
+ * Index entry for one haplotype sequence in FASTA file.
+ */
+typedef struct {
+    char founder[MAX_NAME_LENGTH];  /* founder name */
+    int homolog;                     /* 0=paternal, 1=maternal */
+    long file_offset;               /* byte offset to start of sequence data */
+    long seq_length;                /* sequence length in bases */
+    int line_width;                 /* characters per line (for seeking) */
+} fasta_index_entry;
+
+/*
+ * Index of all sequences in a FASTA file.
+ */
+typedef struct {
+    fasta_index_entry* entries;
+    int n_entries;
+    int capacity;
+    FILE* fp;                       /* open file handle for reading */
+    char* filename;                 /* filename for reopening if needed */
+    long seq_length;                /* common sequence length */
+} fasta_index;
+
+/*
+ * Create FASTA index by scanning file headers.
+ * Maps founder names to file offsets for random access.
+ */
+fasta_index* create_fasta_index(const char* filename,
+                                 const char** founder_names, int n_founders);
+
+/*
+ * Free FASTA index and close file.
+ */
+void free_fasta_index(fasta_index* idx);
+
+/*
+ * Read a range of bases from indexed FASTA file.
+ * Returns number of bases read, or -1 on error.
+ * Caller provides buffer of at least (end - start) bytes.
+ */
+int read_sequence_range(fasta_index* idx, const char* founder,
+                        int homolog, long start, long end, char* buffer);
+
+/*
+ * ============================================================================
+ * Founder Sequence Functions (In-Memory Mode)
  * ============================================================================
  */
 
@@ -156,6 +205,13 @@ char* assemble_chromosome_sequence(parsed_chromosome* chr,
  */
 int assemble_all_sequences(pedtrans_data* pd, founder_sequences* fs,
                            FILE* out, int samples_only);
+
+/*
+ * Streaming version - assembles directly from indexed FASTA file.
+ * Uses minimal memory by reading sequences on demand.
+ */
+int assemble_all_sequences_streaming(pedtrans_data* pd, fasta_index* idx,
+                                      FILE* out, int samples_only);
 
 /*
  * ============================================================================
