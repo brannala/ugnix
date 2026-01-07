@@ -24,6 +24,38 @@ int compare_double(const void* a, const void* b) {
     return 0;
 }
 
+/*
+ * Insertion sort for small arrays of doubles - faster than qsort for n <= 8
+ */
+static inline void insertion_sort_double(double* arr, int n) {
+    for (int i = 1; i < n; i++) {
+        double key = arr[i];
+        int j = i - 1;
+        while (j >= 0 && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j--;
+        }
+        arr[j + 1] = key;
+    }
+}
+
+/*
+ * Binary search to find first segment where seg->end > position
+ * Returns index of first such segment, or n_segments if none found
+ */
+static inline int find_first_segment_after(ped_segment* segments, int n, double position) {
+    int lo = 0, hi = n;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (segments[mid].end <= position) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
 /* Ensure array has capacity for at least one more element */
 static int ensure_capacity_individuals(pedigree* ped) {
     if (ped->n_individuals >= ped->capacity) {
@@ -412,12 +444,16 @@ void chromosome_add_segment(ped_chromosome* chr, double start, double end,
 
 void copy_segments_in_range(ped_chromosome* dest, ped_chromosome* source,
                             double range_start, double range_end) {
-    for (int i = 0; i < source->n_segments; i++) {
+    /* Binary search to find first segment that might overlap */
+    int first = find_first_segment_after(source->segments, source->n_segments, range_start);
+
+    /* Iterate only through potentially overlapping segments */
+    for (int i = first; i < source->n_segments; i++) {
         ped_segment* seg = &source->segments[i];
 
-        /* Skip segments entirely outside range */
-        if (seg->end <= range_start || seg->start >= range_end) {
-            continue;
+        /* Early exit: segments are sorted, so once start >= range_end, we're done */
+        if (seg->start >= range_end) {
+            break;
         }
 
         /* Clip segment to range */
@@ -465,14 +501,26 @@ ped_chromosome* copy_chromosome(ped_chromosome* src) {
  * MEIOSIS AND SIMULATION FUNCTIONS
  * ============================================================================ */
 
+/* Stack buffer size for breakpoints - handles up to 14 crossovers without malloc */
+#define MEIOSIS_STACK_BUFFER_SIZE 16
+
 ped_chromosome* meiosis(ped_chromosome* parent_pat, ped_chromosome* parent_mat,
                         double rec_rate, gsl_rng* rng) {
     /* Generate number of crossovers from Poisson distribution */
     unsigned int n_crossovers = gsl_ran_poisson(rng, rec_rate);
 
-    /* Allocate breakpoints array: [0, crossover positions..., 1] */
-    double* breakpoints = malloc((n_crossovers + 2) * sizeof(double));
-    if (!breakpoints) return NULL;
+    /* Use stack allocation for common case (avoids malloc overhead) */
+    double stack_buffer[MEIOSIS_STACK_BUFFER_SIZE];
+    double* breakpoints;
+    int heap_allocated = 0;
+
+    if (n_crossovers + 2 <= MEIOSIS_STACK_BUFFER_SIZE) {
+        breakpoints = stack_buffer;
+    } else {
+        breakpoints = malloc((n_crossovers + 2) * sizeof(double));
+        if (!breakpoints) return NULL;
+        heap_allocated = 1;
+    }
 
     breakpoints[0] = 0.0;
     breakpoints[n_crossovers + 1] = 1.0;
@@ -482,9 +530,13 @@ ped_chromosome* meiosis(ped_chromosome* parent_pat, ped_chromosome* parent_mat,
         breakpoints[i + 1] = gsl_rng_uniform(rng);
     }
 
-    /* Sort crossover positions */
+    /* Sort crossover positions - use insertion sort for small arrays */
     if (n_crossovers > 1) {
-        qsort(breakpoints + 1, n_crossovers, sizeof(double), compare_double);
+        if (n_crossovers <= 8) {
+            insertion_sort_double(breakpoints + 1, n_crossovers);
+        } else {
+            qsort(breakpoints + 1, n_crossovers, sizeof(double), compare_double);
+        }
     }
 
     /* Choose starting chromosome (0 = paternal, 1 = maternal) */
@@ -494,7 +546,7 @@ ped_chromosome* meiosis(ped_chromosome* parent_pat, ped_chromosome* parent_mat,
     int estimated_segments = parent_pat->n_segments + parent_mat->n_segments + n_crossovers;
     ped_chromosome* gamete = create_chromosome(estimated_segments);
     if (!gamete) {
-        free(breakpoints);
+        if (heap_allocated) free(breakpoints);
         return NULL;
     }
 
@@ -510,7 +562,7 @@ ped_chromosome* meiosis(ped_chromosome* parent_pat, ped_chromosome* parent_mat,
         current_source = 1 - current_source;
     }
 
-    free(breakpoints);
+    if (heap_allocated) free(breakpoints);
 
     /* Merge adjacent segments with identical origin */
     merge_adjacent_segments(gamete);

@@ -8,7 +8,7 @@ PROFILE = -g
 
 # build programs
 
-all: hwe-dis kinship gsum het coalsim pedtrans pedsim
+all: hwe-dis kinship gsum het coalsim pedtrans pedsim seqassemble pedsim_seq
 hwe-dis: hwe-dis.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) hwe-dis.o uGnix.o -lglib-2.0 -lm -o hwe-dis
 kinship: kinship.o data.o uGnix.o -lglib-2.0
@@ -47,11 +47,23 @@ pedsim_main.o: pedsim_main.c pedsim.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 pedsim.o: pedsim.c pedsim.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+seqassemble: seqassemble_main.o seqassemble.o
+	$(CC) $(PROFILE) seqassemble_main.o seqassemble.o -o seqassemble
+seqassemble_main.o: seqassemble_main.c seqassemble.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+seqassemble.o: seqassemble.c seqassemble.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim_seq: pedsim_seq_main.o pedsim_seq.o
+	$(CC) $(PROFILE) pedsim_seq_main.o pedsim_seq.o -o pedsim_seq
+pedsim_seq_main.o: pedsim_seq_main.c pedsim_seq.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim_seq.o: pedsim_seq.c pedsim_seq.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim
-	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o
+	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim seqassemble pedsim_seq
+	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o seqassemble.o seqassemble_main.o pedsim_seq.o pedsim_seq_main.o
 tidy:
 	$(RM) *.o
 
