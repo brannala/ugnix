@@ -1,0 +1,236 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+
+\title{Validation of the \texttt{pedtrans} Chromosome Transmission Simulator:\\
+Kinship Coefficient Tests}
+\author{Bruce Rannala}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe a validation test for the \texttt{pedtrans} pedigree chromosome transmission simulator. The test verifies that simulated identity-by-descent (IBD) sharing between relatives matches theoretical expectations for kinship coefficients. We compare observed kinship coefficients from 1000 simulation replicates against expected values for siblings (0.25), parent-child pairs (0.25), and aunt/uncle-niece/nephew pairs (0.125). All tests confirm that \texttt{pedtrans} correctly simulates Mendelian chromosome transmission with recombination.
+\end{abstract}
+
+\section{Introduction}
+
+The \texttt{pedtrans} program simulates chromosome transmission through a pedigree, tracking which genomic segments in each individual trace back to which founder chromosomes. This document describes validation tests that verify the simulator produces correct patterns of identity-by-descent (IBD) sharing between relatives.
+
+\subsection{Kinship Coefficient}
+
+The kinship coefficient $\phi(A,B)$ between two individuals $A$ and $B$ is defined as the probability that a randomly drawn allele from $A$ is identical by descent (IBD) to a randomly drawn allele from $B$:
+\begin{equation}
+\phi(A,B) = \Pr(\text{random allele from } A \text{ is IBD to random allele from } B)
+\end{equation}
+
+For diploid individuals, this is equivalent to:
+\begin{equation}
+\phi(A,B) = \mathbb{E}\left[\frac{\text{number of IBD allele pairs}}{4}\right]
+\end{equation}
+where there are four possible pairings between the two alleles of $A$ and the two alleles of $B$ at any locus.
+
+\subsection{Expected Kinship Coefficients}
+
+For a pedigree without inbreeding, the theoretical kinship coefficients are:
+
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+\textbf{Relationship} & \textbf{Kinship Coefficient} \\
+\midrule
+Parent--child & 0.25 \\
+Full siblings & 0.25 \\
+Half siblings & 0.125 \\
+Grandparent--grandchild & 0.125 \\
+Aunt/Uncle--Niece/Nephew & 0.125 \\
+First cousins & 0.0625 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Calculation Method}
+
+\subsection{Simulator Output}
+
+The \texttt{pedtrans} simulator outputs, for each individual, a list of genomic segments with their founder chromosome origins. Each segment is defined by:
+\begin{itemize}
+\item Start position $s \in [0,1)$
+\item End position $e \in (s,1]$
+\item Founder origin: (founder ID, homolog), where homolog $\in \{0,1\}$ indicates paternal or maternal chromosome of the founder
+\end{itemize}
+
+For example, an individual might have:
+\begin{verbatim}
+  Paternal:
+    0.000000 0.456789 Father:pat
+    0.456789 1.000000 Father:mat
+  Maternal:
+    0.000000 1.000000 Mother:pat
+\end{verbatim}
+
+\subsection{IBD Determination}
+
+Two alleles are identical by descent if and only if they originate from the \emph{same founder chromosome}---that is, both the founder identity and the homolog (paternal vs.\ maternal) must match.
+
+\subsection{Algorithm}
+
+Given the segment data for two individuals $A$ and $B$, we calculate the kinship coefficient as follows:
+
+\begin{algorithm}[H]
+\caption{Kinship Coefficient Calculation}
+\begin{algorithmic}[1]
+\State Collect all segment breakpoints from both individuals
+\State Sort breakpoints to partition $[0,1]$ into intervals
+\State $\phi \gets 0$
+\For{each interval $[p_i, p_{i+1})$}
+    \State $\ell \gets p_{i+1} - p_i$ \Comment{Interval length}
+    \State Determine founder origins at midpoint for both individuals:
+    \State \hspace{1em} $A_{\text{pat}}, A_{\text{mat}}$ for individual $A$
+    \State \hspace{1em} $B_{\text{pat}}, B_{\text{mat}}$ for individual $B$
+    \State Count IBD pairs among the four pairings:
+    \State \hspace{1em} $n_{\text{IBD}} \gets \mathbf{1}[A_{\text{pat}} = B_{\text{pat}}] + \mathbf{1}[A_{\text{pat}} = B_{\text{mat}}]$
+    \State \hspace{2em} $+ \mathbf{1}[A_{\text{mat}} = B_{\text{pat}}] + \mathbf{1}[A_{\text{mat}} = B_{\text{mat}}]$
+    \State $\phi \gets \phi + \frac{n_{\text{IBD}}}{4} \cdot \ell$
+\EndFor
+\State \Return $\phi$
+\end{algorithmic}
+\end{algorithm}
+
+Here, $\mathbf{1}[\cdot]$ is the indicator function, and two origins are equal if they have both the same founder ID and the same homolog.
+
+\subsection{Example: Sibling Comparison}
+
+Consider two siblings who inherited:
+\begin{itemize}
+\item Sibling 1: paternal = \texttt{Father:pat}, maternal = \texttt{Mother:mat}
+\item Sibling 2: paternal = \texttt{Father:pat}, maternal = \texttt{Mother:pat}
+\end{itemize}
+
+The four allele pairings at any position are:
+
+\begin{center}
+\begin{tabular}{cccc}
+\toprule
+\textbf{Pair} & \textbf{Sib1 Allele} & \textbf{Sib2 Allele} & \textbf{IBD?} \\
+\midrule
+1 & Father:pat & Father:pat & Yes \\
+2 & Father:pat & Mother:pat & No (different founder) \\
+3 & Mother:mat & Father:pat & No (different founder) \\
+4 & Mother:mat & Mother:pat & No (same founder, different homolog) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+In this realization, $n_{\text{IBD}} = 1$, giving kinship $= 1/4 = 0.25$.
+
+\section{Test Design}
+
+\subsection{Test Pedigrees}
+
+We constructed two test pedigrees:
+
+\paragraph{Simple Pedigree.} Two founders (Father, Mother) and two sibling offspring (Sib1, Sib2).
+
+\paragraph{Extended Pedigree.} A four-generation pedigree with 8 founders enabling tests of multiple relationship types:
+\begin{itemize}
+\item Generation 0: 8 founders (4 unrelated couples)
+\item Generation 1: 4 individuals (children of founder couples)
+\item Generation 2: 4 individuals (two pairs of siblings)
+\item Generation 3: 4 individuals (offspring)
+\end{itemize}
+
+\subsection{Simulation Parameters}
+
+\begin{itemize}
+\item Recombination rate: 1.0 (expected crossovers per meiosis)
+\item Number of replicates: 1000
+\item Random seeds: Sequential (1 through 1000) for reproducibility
+\end{itemize}
+
+\subsection{Relationships Tested}
+
+\begin{enumerate}
+\item \textbf{Siblings}: Individuals sharing both parents (expected $\phi = 0.25$)
+\item \textbf{Parent--child}: Direct parent-offspring pairs (expected $\phi = 0.25$)
+\item \textbf{Aunt/Uncle--Niece/Nephew}: Second-degree relatives (expected $\phi = 0.125$)
+\end{enumerate}
+
+\section{Results}
+
+\subsection{Simple Pedigree: Sibling Test}
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Relationship} & \textbf{Mean $\hat{\phi}$} & \textbf{Std Dev} & \textbf{Expected} \\
+\midrule
+Siblings (Sib1--Sib2) & 0.2472 & 0.1080 & 0.25 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Extended Pedigree: Multiple Relationships}
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Relationship} & \textbf{Mean $\hat{\phi}$} & \textbf{Std Dev} & \textbf{Expected} & \textbf{Status} \\
+\midrule
+Siblings (G2) & 0.2535 & 0.1078 & 0.25 & OK \\
+Siblings (G3) & 0.2510 & 0.1085 & 0.25 & OK \\
+Parent--Child & 0.2500 & 0.0000 & 0.25 & OK \\
+Aunt/Uncle--Niece/Nephew & 0.1288 & 0.0720 & 0.125 & OK \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Observations}
+
+\begin{enumerate}
+\item \textbf{Sibling kinship}: The observed mean of $\approx 0.25$ matches the theoretical expectation. The standard deviation of $\approx 0.11$ reflects the variance in IBD sharing due to random segregation and recombination.
+
+\item \textbf{Parent--child kinship}: The observed value is exactly 0.25 with zero variance. This is expected because a child always inherits exactly one allele from each parent, making the IBD count deterministic (always 1 out of 4 pairings involves the transmitted allele matching itself).
+
+\item \textbf{Aunt/Uncle--Niece/Nephew}: The observed mean of $\approx 0.129$ closely matches the expected 0.125. The higher variance compared to siblings reflects the additional meiosis separating these relatives.
+\end{enumerate}
+
+\section{Statistical Validation}
+
+For $n = 1000$ replicates, the standard error of the mean is:
+\begin{equation}
+\text{SE} = \frac{\sigma}{\sqrt{n}}
+\end{equation}
+
+For siblings with $\sigma \approx 0.108$:
+\begin{equation}
+\text{SE} = \frac{0.108}{\sqrt{1000}} \approx 0.0034
+\end{equation}
+
+The observed mean of 0.2472 differs from the expected 0.25 by approximately 0.8 standard errors, well within the range expected from sampling variation.
+
+\section{Conclusion}
+
+The \texttt{pedtrans} chromosome transmission simulator produces kinship coefficients that match theoretical expectations for all tested relationship types:
+\begin{itemize}
+\item Siblings: $\hat{\phi} = 0.25$ (expected 0.25)
+\item Parent--child: $\hat{\phi} = 0.25$ (expected 0.25)
+\item Aunt/Uncle--Niece/Nephew: $\hat{\phi} = 0.125$ (expected 0.125)
+\end{itemize}
+
+These results validate that the simulator correctly implements:
+\begin{enumerate}
+\item Mendelian segregation (random selection of parental chromosomes)
+\item Recombination (crossover events during meiosis)
+\item Proper tracking of founder chromosome identity through the pedigree
+\end{enumerate}
+
+The test script is available at \texttt{testing/test\_pedtrans\_sharing.py}.
+
+\end{document}

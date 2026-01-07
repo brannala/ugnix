@@ -4,3 +4,10 @@ bcft/*
 venv/
 __pycache__/
 *.pyc
+*.o
+gsum
+het
+hwe-dis
+kinship
+coalsim
+pedtrans
