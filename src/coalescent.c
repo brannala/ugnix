@@ -4,6 +4,9 @@
 #include<coalescent.h>
 #endif
 
+/* Global sample size for bitarray allocation */
+int g_noSamples = 0;
+
 struct geneTree* SortedMerge(struct geneTree* a, struct geneTree* b) 
 { 
 	struct geneTree* result = NULL; 
@@ -72,9 +75,11 @@ chromosome* getChrPtr(int chr, chrsample* chrom)
   return chrom->chrs[chr];
 }
 
-unsigned int unionAnc(unsigned int anc1, unsigned int anc2)
+bitarray* unionAnc(const bitarray *anc1, const bitarray *anc2)
 {
-  return(anc1 | anc2);
+  bitarray *result = bitarray_create(g_noSamples);
+  bitarray_union_into(result, anc1, anc2);
+  return result;
 }
 
 chromosome* copy_chrom(chromosome* sourceChr)
@@ -83,6 +88,7 @@ chromosome* copy_chrom(chromosome* sourceChr)
   ancestry* currNew;
   ancestry* currOld;
   newChr = malloc(sizeof(chromosome));
+  newChr->ancLen = sourceChr->ancLen;  /* copy cached ancestral length */
   currOld = sourceChr->anc;
   newChr->anc = malloc(sizeof(ancestry));
   int firstAnc=1;
@@ -96,9 +102,9 @@ chromosome* copy_chrom(chromosome* sourceChr)
 	}
       firstAnc = 0;
       currNew->position = currOld->position;
-      currNew->abits = currOld->abits;
+      currNew->abits = bitarray_copy(currOld->abits);
       currOld = currOld->next;
-      
+
     }
   currNew->next = NULL;
   return newChr;
@@ -111,6 +117,7 @@ void delete_anc(ancestry* head)
     {
        tmp = head;
        head = head->next;
+       if (tmp->abits) bitarray_free(tmp->abits);
        free(tmp);
     }
 }
@@ -160,7 +167,7 @@ double calcAncLength(chrsample* chrom)
       lastPosition = 0;
       while(tmp_anc != NULL)
 	{
-	  if(tmp_anc->abits)
+	  if(tmp_anc->abits && !bitarray_is_zero(tmp_anc->abits))
 	      totLength += tmp_anc->position - lastPosition;
 	  lastPosition = tmp_anc->position;
 	  tmp_anc = tmp_anc->next;
@@ -176,6 +183,21 @@ double getAncLength(const chrsample* chrom)
   return chrom->ancLength;
 }
 
+/* Calculate ancestral length for a single chromosome */
+double calcChromAncLength(const chromosome* chr)
+{
+  double length = 0;
+  double lastPos = 0;
+  ancestry* tmp = chr->anc;
+  while (tmp != NULL) {
+    if (tmp->abits && !bitarray_is_zero(tmp->abits))
+      length += tmp->position - lastPos;
+    lastPos = tmp->position;
+    tmp = tmp->next;
+  }
+  return length;
+}
+
 /* Update ancLength cache after coalescence */
 void updateAncLengthCoal(chrsample* chrom, double removed)
 {
@@ -186,37 +208,56 @@ void updateAncLengthCoal(chrsample* chrom, double removed)
 eventPos is the absolute position of rec event on cumulative ancestral
 chromosome material (ancLength) -> getRecEvent finds the recombinant chromosome
 and relative position of recombination event on that chromosome modifies recEv
+
+Uses binary search on precomputed cumulative sums for O(n + log n) = O(n) lookup.
+The O(n) is for building cumulative array; binary search is O(log n).
+For high recombination rates, this is faster than the previous O(n * segments).
 */
 
 void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 {
-  ancestry* tmp_anc;
-  double lastPosition = 0;
-  double currLength = 0;
-  unsigned int foundPosition = 0;
+  int n = chrom->count;
 
-  for (int i = 0; i < chrom->count && !foundPosition; i++)
+  /* Build cumulative sum array: cumSum[i] = sum of ancLen for chrs 0..i-1 */
+  double* cumSum = alloca((n + 1) * sizeof(double));
+  cumSum[0] = 0;
+  for (int i = 0; i < n; i++)
+    cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+
+  /* Binary search: find largest i where cumSum[i] <= eventPos */
+  int lo = 0, hi = n;
+  while (lo < hi) {
+    int mid = (lo + hi + 1) / 2;  /* round up to avoid infinite loop */
+    if (cumSum[mid] <= eventPos)
+      lo = mid;
+    else
+      hi = mid - 1;
+  }
+
+  /* lo is the target chromosome index */
+  double cumLen = cumSum[lo];
+
+  /* Linear scan within the target chromosome to find exact position */
+  ancestry* tmp_anc = chrom->chrs[lo]->anc;
+  double lastPosition = 0;
+  double currLength = cumLen;
+  double nonAncestralLength = 0;
+
+  while (tmp_anc != NULL)
     {
-      tmp_anc = chrom->chrs[i]->anc;
-      lastPosition = 0;
-      double lastLength = currLength;
-      double nonAncestralLength = 0;
-      while ((tmp_anc != NULL) && (!foundPosition))
-	{
-	  if (tmp_anc->abits)
-	    currLength += tmp_anc->position - lastPosition;
-	  else
-	    nonAncestralLength += tmp_anc->position - lastPosition;
-	  if (currLength > eventPos)
-	    {
-	      recEv->location = eventPos + nonAncestralLength - lastLength;
-	      recEv->chrom = chrom->chrs[i];
-	      recEv->chromIdx = i;  /* Store index for O(1) deletion */
-	      foundPosition = 1;
-	    }
-	  lastPosition = tmp_anc->position;
-	  tmp_anc = tmp_anc->next;
-	}
+      if (tmp_anc->abits && !bitarray_is_zero(tmp_anc->abits))
+        currLength += tmp_anc->position - lastPosition;
+      else
+        nonAncestralLength += tmp_anc->position - lastPosition;
+      if (currLength > eventPos)
+        {
+          recEv->location = eventPos + nonAncestralLength - cumLen;
+          recEv->chrom = chrom->chrs[lo];
+          recEv->chromIdx = lo;
+          return;
+        }
+      lastPosition = tmp_anc->position;
+      tmp_anc = tmp_anc->next;
     }
 }
 
@@ -229,7 +270,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   chromosome* newRight = malloc(sizeof(chromosome));
 
   newRight->anc = malloc(sizeof(ancestry));
-  newRight->anc->abits = 0;
+  newRight->anc->abits = bitarray_create(g_noSamples);  /* zero bitarray */
   newRight->anc->position = recEv.location;
   newRight->anc->next = NULL;
   currAnc = newRight->anc;
@@ -240,7 +281,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
 	  currAnc->next = malloc(sizeof(ancestry));
 	  currAnc = currAnc->next;
 	  currAnc->next = NULL;
-	  currAnc->abits = tmp->abits;
+	  currAnc->abits = bitarray_copy(tmp->abits);
 	  currAnc->position = tmp->position;
 	}
       tmp = tmp->next;
@@ -259,7 +300,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
 	  currAnc = currAnc->next;
 	  currAnc->next = NULL;
 	}
-      currAnc->abits = tmp->abits;
+      currAnc->abits = bitarray_copy(tmp->abits);
       currAnc->position = tmp->position;
       tmp = tmp->next;
       atHead = 0;
@@ -270,11 +311,11 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       currAnc = currAnc->next;
       currAnc->next = NULL;
     }
-  currAnc->abits = tmp->abits;
+  currAnc->abits = bitarray_copy(tmp->abits);
   currAnc->position = recEv.location;
   currAnc->next = malloc(sizeof(ancestry));
   currAnc = currAnc->next;
-  currAnc->abits = 0;
+  currAnc->abits = bitarray_create(g_noSamples);  /* zero bitarray */
   currAnc->position = 1.0;
   currAnc->next = NULL;
 
@@ -286,25 +327,32 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
      can occasionally land at segment boundaries, creating chromosomes
      with no ancestral material. Only add chromosomes with ancestry. */
   currAnc = newLeft->anc;
-  unsigned int sumAncLeft = 0;
+  int hasAncLeft = 0;
   while (currAnc != NULL)
     {
-      sumAncLeft += currAnc->abits;
+      if (currAnc->abits && !bitarray_is_zero(currAnc->abits)) {
+        hasAncLeft = 1;
+        break;
+      }
       currAnc = currAnc->next;
     }
 
   currAnc = newRight->anc;
-  unsigned int sumAncRight = 0;
+  int hasAncRight = 0;
   while (currAnc != NULL)
     {
-      sumAncRight += currAnc->abits;
+      if (currAnc->abits && !bitarray_is_zero(currAnc->abits)) {
+        hasAncRight = 1;
+        break;
+      }
       currAnc = currAnc->next;
     }
 
   /* Count how many chromosomes we're adding */
   int added = 0;
-  if (sumAncLeft != 0)
+  if (hasAncLeft)
     {
+      newLeft->ancLen = calcChromAncLength(newLeft);  /* cache for binary search */
       appendChrom(chrom, newLeft);
       added++;
     }
@@ -315,8 +363,9 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       free(newLeft);
     }
 
-  if (sumAncRight != 0)
+  if (hasAncRight)
     {
+      newRight->ancLen = calcChromAncLength(newRight);  /* cache for binary search */
       appendChrom(chrom, newRight);
       added++;
     }
@@ -336,15 +385,16 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
   double epsilon = 1e-10;
   chromosome* commonAnc = malloc(sizeof(chromosome));
   commonAnc->anc = malloc(sizeof(ancestry));
-  commonAnc->anc->abits=0;
+  commonAnc->anc->abits = bitarray_create(g_noSamples);
   commonAnc->anc->position=0;
-  commonAnc->anc->next = NULL; 
+  commonAnc->anc->next = NULL;
   ancestry* tmp = commonAnc->anc;
   ancestry* anc1 = ptrchr1->anc;
   ancestry* anc2 = ptrchr2->anc;
-  
+
   while((anc1 != NULL)&&(anc2 != NULL))
     {
+      bitarray_free(tmp->abits);
       tmp->abits = unionAnc(anc1->abits,anc2->abits);
       if((anc1->position - anc2->position) > epsilon)
 	{
@@ -369,11 +419,11 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 	 {
 	   tmp->next = malloc(sizeof(ancestry));
 	   tmp->next->next = NULL;
-	   tmp->next->abits=0;
+	   tmp->next->abits = bitarray_create(g_noSamples);
 	   tmp->next->position=0;
 	   tmp = tmp->next;
 	 }
-    } 
+    }
   return(commonAnc);
 } 
 
@@ -384,11 +434,12 @@ void combineIdentAdjAncSegs(chromosome *ptrchr)
   tmp = ptrchr->anc;
   while(tmp->next != NULL)
     {
-      if(tmp->abits == tmp->next->abits)
+      if(bitarray_equal(tmp->abits, tmp->next->abits))
 	{
 	  tmp_del = tmp->next;
 	  tmp->position = tmp->next->position;
 	  tmp->next = tmp->next->next;
+	  if (tmp_del->abits) bitarray_free(tmp_del->abits);
 	  free(tmp_del);
 	}
       else
@@ -421,7 +472,21 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
   *noChrom = *noChrom - 1;
   chromosome* ptrchr1 = getChrPtr(pair.chr1, chrom);
   chromosome* ptrchr2 = getChrPtr(pair.chr2, chrom);
+
+  /* Use cached ancestral lengths for incremental update */
+  double len1 = ptrchr1->ancLen;
+  double len2 = ptrchr2->ancLen;
+
   chromosome* commonAnc = mergeChr(ptrchr1, ptrchr2);
+  combineIdentAdjAncSegs(commonAnc);
+
+  /* Calculate merged length and overlap */
+  double lenMerged = calcChromAncLength(commonAnc);
+  commonAnc->ancLen = lenMerged;  /* cache for binary search */
+  double overlap = len1 + len2 - lenMerged;
+
+  /* Update cached ancLength incrementally */
+  updateAncLengthCoal(chrom, overlap);
 
   /* Delete higher index first to preserve lower index validity
      (swap-and-pop changes indices) */
@@ -439,28 +504,29 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
   appendChrom(chrom, commonAnc);
 }
 
-void updateCoalescentEvents(struct coalescent_events** coalescent_list, chrsample* chromSample, double totalTime)
+void updateCoalescentEvents(struct coalescent_events** coalescent_list,
+			    struct coalescent_events** coalescent_list_tail,
+			    chrsample* chromSample, double totalTime)
 {
-	    struct coalescent_events* tmpCList;
+	    struct coalescent_events* newEvent = malloc(sizeof(struct coalescent_events));
+
+	    /* Get the last chromosome (most recently coalesced) */
+	    newEvent->chr = copy_chrom(chromSample->chrs[chromSample->count - 1]);
+	    combineIdentAdjAncSegs(newEvent->chr);
+	    newEvent->time = totalTime;
+	    newEvent->next = NULL;
+
+	    /* O(1) append using tail pointer */
 	    if(*coalescent_list == NULL)
 	      {
-		*coalescent_list = malloc(sizeof(struct coalescent_events));
-		tmpCList = *coalescent_list;
+		*coalescent_list = newEvent;
+		*coalescent_list_tail = newEvent;
 	      }
 	    else
 	      {
-		tmpCList = *coalescent_list;
-		while(tmpCList->next != NULL)
-		  tmpCList = tmpCList->next;
-		tmpCList->next = malloc(sizeof(struct coalescent_events));
-		tmpCList = tmpCList->next;
+		(*coalescent_list_tail)->next = newEvent;
+		*coalescent_list_tail = newEvent;
 	      }
-
-	    /* Get the last chromosome (most recently coalesced) */
-	    tmpCList->chr = copy_chrom(chromSample->chrs[chromSample->count - 1]);
-	    combineIdentAdjAncSegs(tmpCList->chr);
-	    tmpCList->time = totalTime;
-	    tmpCList->next = NULL;
 }
 
 unsigned long long int ipow( unsigned long long int base, int exp)
@@ -478,7 +544,7 @@ unsigned long long int ipow( unsigned long long int base, int exp)
   return result;
 }
 
-struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list, unsigned int mrca)
+struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list, const bitarray* mrca)
 {
   struct geneTree* geneT = NULL;
   struct geneTree* currGT = NULL;
@@ -486,31 +552,34 @@ struct geneTree* getGeneTree(double lower, double upper, struct coalescent_event
   ancestry* localAnc;
 
   #ifdef DEBUG_GENETREE
-  fprintf(stderr, "DEBUG getGeneTree: lower=%.4f upper=%.4f mrca=%u\n", lower, upper, mrca);
+  fprintf(stderr, "DEBUG getGeneTree: lower=%.4f upper=%.4f mrca=", lower, upper);
+  bitarray_print(mrca, stderr);
+  fprintf(stderr, "\n");
   struct coalescent_events* debugCL = coalescent_list;
   int eventNum = 0;
   while(debugCL != NULL) {
-    fprintf(stderr, "  Event %d: time=%.2f, chr->anc->abits=%u\n",
-            eventNum++, debugCL->time, debugCL->chr->anc->abits);
+    fprintf(stderr, "  Event %d: time=%.2f, chr->anc->abits=", eventNum++, debugCL->time);
+    bitarray_print(debugCL->chr->anc->abits, stderr);
+    fprintf(stderr, "\n");
     debugCL = debugCL->next;
   }
   #endif
 
-  while((localCL != NULL)&&((currGT == NULL)||(currGT->abits != mrca)))
+  while((localCL != NULL)&&((currGT == NULL)||(!bitarray_equal(currGT->abits, mrca))))
     {
       localAnc = localCL->chr->anc;
       double lastPos=0.0;
       int foundAnc=0;
       while((localAnc != NULL) && !foundAnc)
 	{
-	  if(!(isSingleton(localAnc->abits) || localAnc->abits == 0))
+	  if(!(bitarray_is_singleton(localAnc->abits) || bitarray_is_zero(localAnc->abits)))
 	    {
 	      if((upper <= localAnc->position)&&(lower >= lastPos))
 		{
 		  struct geneTree* tmpGT = geneT;
 		  while((tmpGT != NULL) && !foundAnc)
 		    {
-		      if(tmpGT->abits == localAnc->abits)
+		      if(bitarray_equal(tmpGT->abits, localAnc->abits))
 			foundAnc=1;
 		      tmpGT = tmpGT->next;
 		    }
@@ -528,7 +597,7 @@ struct geneTree* getGeneTree(double lower, double upper, struct coalescent_event
 			  currGT = currGT->next;
 			  currGT->next = NULL;
 			}
-		      currGT->abits = localAnc->abits;
+		      currGT->abits = bitarray_copy(localAnc->abits);
 		      currGT->time = localCL->time;
 		      foundAnc = 1;
 		    }
@@ -543,22 +612,22 @@ struct geneTree* getGeneTree(double lower, double upper, struct coalescent_event
   return geneT;
 }
 
-void addNode(unsigned int val, double time, struct tree* lroot)
+void addNode(bitarray* val, double time, struct tree* lroot)
 {
   while(lroot->right != NULL)
     {
-      if(lroot->right->abits == val)
+      if(bitarray_equal(lroot->right->abits, val))
 	{
 	  lroot->right->time = time;
 	  return;
 	}
       else
-	if(lroot->left->abits == val)
+	if(bitarray_equal(lroot->left->abits, val))
 	{
 	  lroot->left->time = time;
 	  return;
-	}  
-      if((lroot->right->abits & val)!=0)
+	}
+      if(bitarray_intersects(lroot->right->abits, val))
 	lroot = lroot->right;
       else
 	lroot = lroot->left;
@@ -566,29 +635,47 @@ void addNode(unsigned int val, double time, struct tree* lroot)
   lroot->right = malloc(sizeof(struct tree));
   lroot->right->right = NULL;
   lroot->right->left = NULL;
-  lroot->right->abits = val;
+  lroot->right->abits = bitarray_copy(val);
   lroot->right->time = time;
   lroot->left = malloc(sizeof(struct tree));
-  lroot->left->abits = ~val & lroot->abits;
+  lroot->left->abits = bitarray_create(g_noSamples);
+  bitarray_complement(lroot->left->abits, val);
+  bitarray_intersect(lroot->left->abits, lroot->abits);
   lroot->left->left = NULL;
   lroot->left->right = NULL;
 }
 
 void splitNode(struct tree* lroot)
 {
-  unsigned int bitmask = 1;
-  while(!(bitmask & lroot->abits))
-    bitmask = bitmask << 1;
-  if((~bitmask & lroot->abits)!=0)
+  /* Find the first set bit in lroot->abits */
+  int firstBit = -1;
+  for (int i = 0; i < lroot->abits->nbits; i++) {
+    if (bitarray_test(lroot->abits, i)) {
+      firstBit = i;
+      break;
+    }
+  }
+  if (firstBit < 0) return;
+
+  /* Check if there are other bits set besides firstBit */
+  bitarray* complement = bitarray_create(g_noSamples);
+  bitarray_copy_to(complement, lroot->abits);
+  bitarray_clear(complement, firstBit);
+
+  if (!bitarray_is_zero(complement))
     {
       lroot->left = malloc(sizeof(struct tree));
       lroot->right = malloc(sizeof(struct tree));
       lroot->left->left = NULL;
       lroot->left->right = NULL;
-      lroot->left->abits = bitmask;
+      lroot->left->abits = bitarray_singleton(g_noSamples, firstBit);
       lroot->right->right = NULL;
       lroot->right->left = NULL;
-      lroot->right->abits = (~bitmask & lroot->abits);
+      lroot->right->abits = complement;
+    }
+  else
+    {
+      bitarray_free(complement);
     }
   return;
 }
@@ -605,17 +692,14 @@ void fillTips(struct tree* lroot)
   return;
 }
 
-unsigned int binaryToChrLabel(unsigned int x, int noSamples)
+int binaryToChrLabel(const bitarray* ba)
 {
-  unsigned int bitmask = 1;
-  unsigned int pos = 1;
-  while(!(bitmask & x) && (pos <= noSamples))
-    {
-      bitmask = bitmask << 1;
-      pos++;
-    }
-  return pos;
-
+  /* Return index of first set bit + 1 (1-indexed label) */
+  for (int i = 0; i < ba->nbits; i++) {
+    if (bitarray_test(ba, i))
+      return i + 1;
+  }
+  return 0;  /* No bits set */
 }
 
 /* Helper function to print tree recursively with proper branch lengths */
@@ -640,7 +724,7 @@ static void printTreeNewickHelper(struct tree* node, int noSamples, int toScreen
   else
     {
       /* Tip node - branch length is from time 0 to parent */
-      fprintf(out, "%d:%.4f", binaryToChrLabel(node->abits, noSamples), parentTime);
+      fprintf(out, "%d:%.4f", binaryToChrLabel(node->abits), parentTime);
     }
 }
 
@@ -662,7 +746,7 @@ void printTreeNewick(struct tree* root, int noSamples, int toScreen, FILE* tree_
   else
     {
       /* Degenerate case: single tip */
-      fprintf(out, "%d;", binaryToChrLabel(root->abits, noSamples));
+      fprintf(out, "%d;", binaryToChrLabel(root->abits));
     }
 }
 
@@ -672,6 +756,7 @@ void freeTree(struct tree* node)
   if(node == NULL) return;
   freeTree(node->left);
   freeTree(node->right);
+  if(node->abits) bitarray_free(node->abits);
   free(node);
 }
 
@@ -692,11 +777,11 @@ void printTree(struct tree* lroot, int noSamples, int toScreen, FILE* tree_file)
       toScreen? fprintf(stderr,":%.2f",lroot->time) : fprintf(tree_file,":%.2f",lroot->time);
     }
   if(lroot->left == NULL)
-    toScreen? fprintf(stderr,"%d",binaryToChrLabel(lroot->abits,noSamples)) : fprintf(tree_file,"%d",binaryToChrLabel(lroot->abits,noSamples));
+    toScreen? fprintf(stderr,"%d",binaryToChrLabel(lroot->abits)) : fprintf(tree_file,"%d",binaryToChrLabel(lroot->abits));
   return;
 }
 
-int TestMRCAForAll(chrsample* chrom, unsigned int mrca)
+int TestMRCAForAll(chrsample* chrom, const bitarray* mrca)
 {
   ancestry* tmp_anc;
   for (int i = 0; i < chrom->count; i++)
@@ -704,7 +789,7 @@ int TestMRCAForAll(chrsample* chrom, unsigned int mrca)
       tmp_anc = chrom->chrs[i]->anc;
       while (tmp_anc != NULL)
 	{
-	  if ((tmp_anc->abits > 0) && (tmp_anc->abits != mrca))
+	  if (!bitarray_is_zero(tmp_anc->abits) && !bitarray_equal(tmp_anc->abits, mrca))
 	    return 0; // not all zeros or all ones therefore not mrca of sample
 	  tmp_anc = tmp_anc->next;
 	}
@@ -727,8 +812,9 @@ chrsample* create_sample(int noChrom)
       chromosome* newChrom = malloc(sizeof(chromosome));
       newChrom->anc = malloc(sizeof(ancestry));
       newChrom->anc->next = NULL;
-      newChrom->anc->abits = 1u << i;
+      newChrom->anc->abits = bitarray_singleton(g_noSamples, i);
       newChrom->anc->position = 1.0;
+      newChrom->ancLen = 1.0;  /* initial: full chromosome is ancestral */
       chromSample->chrs[chromSample->count++] = newChrom;
     }
   return chromSample;
@@ -798,7 +884,7 @@ void addMRCAInterval(struct mrca_list** head, double newlower,
 } 
  
 
-void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime, unsigned int mrca)
+void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime, const bitarray* mrca)
 {
   double newlower = 0;
   double newupper = 0;
@@ -812,7 +898,7 @@ void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime,
     {
       if (firstInt)
 	{
-	  if (tmp->abits == mrca)
+	  if (bitarray_equal(tmp->abits, mrca))
 	    {
 	      newlower = 0.0;
 	      newupper = tmp->position;
@@ -822,7 +908,7 @@ void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime,
 	}
       else
 	{
-	  if (tmp->next->abits == mrca)
+	  if (bitarray_equal(tmp->next->abits, mrca))
 	    {
 	      newlower = tmp->position;
 	      newupper = tmp->next->position;
@@ -964,46 +1050,64 @@ void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double sm
     }
 }
 
+/*
+getMutEvent: Find mutation location using binary search on precomputed cumulative sums.
+O(n + log n) = O(n) for building array + binary search.
+*/
 void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time)
 {
-  ancestry* tmp_anc;
-  double lastPosition = 0;
-  double currLength = 0;
-  unsigned int foundPosition = 0;
+  int n = chrom->count;
 
-  for (int i = 0; i < chrom->count && !foundPosition; i++)
+  /* Build cumulative sum array */
+  double* cumSum = alloca((n + 1) * sizeof(double));
+  cumSum[0] = 0;
+  for (int i = 0; i < n; i++)
+    cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+
+  /* Binary search: find largest i where cumSum[i] <= eventPos */
+  int lo = 0, hi = n;
+  while (lo < hi) {
+    int mid = (lo + hi + 1) / 2;
+    if (cumSum[mid] <= eventPos)
+      lo = mid;
+    else
+      hi = mid - 1;
+  }
+
+  double cumLen = cumSum[lo];
+
+  /* Linear scan within target chromosome */
+  ancestry* tmp_anc = chrom->chrs[lo]->anc;
+  double lastPosition = 0;
+  double currLength = cumLen;
+  double nonAncestralLength = 0;
+
+  while (tmp_anc != NULL)
     {
-      tmp_anc = chrom->chrs[i]->anc;
-      lastPosition = 0;
-      double lastLength = currLength;
-      double nonAncestralLength = 0;
-      while ((tmp_anc != NULL) && (!foundPosition))
-	{
-	  if (tmp_anc->abits)
-	    currLength += tmp_anc->position - lastPosition;
-	  else
-	    nonAncestralLength += tmp_anc->position - lastPosition;
-	  if (currLength > eventPos)
-	    {
-	      mutEv->location = eventPos + nonAncestralLength - lastLength;
-	      mutEv->age = time;
-	      mutEv->abits = tmp_anc->abits;
-	      foundPosition = 1;
-	    }
-	  lastPosition = tmp_anc->position;
-	  tmp_anc = tmp_anc->next;
-	}
+      if (tmp_anc->abits && !bitarray_is_zero(tmp_anc->abits))
+        currLength += tmp_anc->position - lastPosition;
+      else
+        nonAncestralLength += tmp_anc->position - lastPosition;
+      if (currLength > eventPos)
+        {
+          mutEv->location = eventPos + nonAncestralLength - cumLen;
+          mutEv->age = time;
+          mutEv->abits = bitarray_copy(tmp_anc->abits);
+          return;
+        }
+      lastPosition = tmp_anc->position;
+      tmp_anc = tmp_anc->next;
     }
 }
 
 void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
-		    char* baseUnit, unsigned int noSamples, unsigned int mrca)
+		    char* baseUnit, int noSamples, const bitarray* mrca)
 {
   printf("\nMutation List\n------------------------------------\n");
   mutation* tmp1 = mutation_list;
   while(tmp1 != NULL)
     {
-      if(tmp1->abits != mrca)
+      if(!bitarray_equal(tmp1->abits, mrca))
 	{
 	  if(seqUnits)
 	    printf("Pos: %ld%s Age: %.2f Chrom: ",
@@ -1011,14 +1115,14 @@ void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
 	  else
 	    printf("Pos: %f Age: %.2f Chrom: ",
 		   tmp1->location,tmp1->age);
-	  displayBits(tmp1->abits,noSamples);
+	  bitarray_print(tmp1->abits, stdout);
 	  printf("\n");
 	}
-      tmp1 = tmp1->next;	
+      tmp1 = tmp1->next;
     }
 }
 
-void printChromosomes(chrsample* chromSample, unsigned int noSamples)
+void printChromosomes(chrsample* chromSample, int noSamples)
 {
   ancestry* tmp = NULL;
 
@@ -1028,9 +1132,9 @@ void printChromosomes(chrsample* chromSample, unsigned int noSamples)
       tmp = chromSample->chrs[i]->anc;
       while (tmp != NULL)
 	{
-	  if ((tmp->next == NULL) || (tmp->next->abits != tmp->abits))
+	  if ((tmp->next == NULL) || (!bitarray_equal(tmp->next->abits, tmp->abits)))
 	    {
-	      displayBits(tmp->abits, noSamples);
+	      bitarray_print(tmp->abits, stdout);
 	      printf(" %lf \n", tmp->position);
 	      tmp = tmp->next;
 	    }
@@ -1209,9 +1313,8 @@ char** simulateSequences(mutation* mutation_list, int totBases, int noSamples,
       else
         newBase = JC69RBase(r, sequences[0][currPos]);
       /* Apply to all samples that carry this mutation (bit set in abits) */
-      unsigned int abits = curr_mutList->abits;
       for (int i = 0; i < noSamples; i++)
-        if (abits & (1u << i))
+        if (bitarray_test(curr_mutList->abits, i))
           sequences[i][currPos] = newBase;
       curr_mutList = curr_mutList->next;
     }

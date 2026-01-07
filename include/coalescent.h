@@ -2,20 +2,25 @@
 #include<assert.h>
 #include<gsl/gsl_rng.h>
 #include<gsl/gsl_randist.h>
+#include "bitarray.h"
 
-#define POS2BASE(X,Y) (long)(ceil((X)*(Y))-1) /* convert POS X in (0,1) to BASE position 
+#define POS2BASE(X,Y) (long)(ceil((X)*(Y))-1) /* convert POS X in (0,1) to BASE position
 				   in sequence of length Y */
+
+/* Global sample size for bitarray allocation */
+extern int g_noSamples;
+
 struct tree {
   struct tree* left;
   struct tree* right;
-  unsigned int abits;
+  bitarray* abits;
   double time;
 };
 
 struct mutation
 {
   double location;
-  unsigned int abits;
+  bitarray* abits;
   double age;
   struct mutation* next;
 };
@@ -24,7 +29,7 @@ typedef struct mutation mutation;
 struct ancestry
 {
   double position;
-  unsigned int abits;
+  bitarray* abits;
   struct ancestry* next;
 };
 typedef struct ancestry ancestry;
@@ -32,6 +37,7 @@ typedef struct ancestry ancestry;
 struct chromosome
 {
   ancestry* anc;
+  double ancLen;  /* cached ancestral length for O(log n) event lookup */
 };
 typedef struct chromosome chromosome;
 
@@ -63,7 +69,7 @@ struct coalescent_events {
 };
 
 struct geneTree {
-  unsigned int abits;
+  bitarray* abits;
   double time;
   struct geneTree* next;
 };
@@ -85,7 +91,8 @@ struct mrca_summary {
 /* O(1) chromosome access via array */
 chromosome* getChrPtr(int chr, chrsample* chrom);
 
-unsigned int unionAnc(unsigned int anc1, unsigned int anc2);
+/* Union two bitarrays (creates new bitarray with combined bits) */
+bitarray* unionAnc(const bitarray *anc1, const bitarray *anc2);
 
 chromosome* copy_chrom(chromosome* sourceChr);
 
@@ -98,6 +105,9 @@ void delete_sample(chrsample* chrom);
 
 /* Calculate total ancestral length (updates cache) */
 double calcAncLength(chrsample* chrom);
+
+/* Calculate ancestral length for a single chromosome */
+double calcChromAncLength(const chromosome* chr);
 
 /* Get cached ancestral length */
 double getAncLength(const chrsample* chrom);
@@ -118,13 +128,15 @@ void combineIdentAdjAncSegs(chromosome *ptrchr);
 
 void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom);
 
-void updateCoalescentEvents(struct coalescent_events** coalescent_list, chrsample* chromSample, double totalTime);
+void updateCoalescentEvents(struct coalescent_events** coalescent_list,
+			    struct coalescent_events** coalescent_list_tail,
+			    chrsample* chromSample, double totalTime);
 
-struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list, unsigned int mrca);
+struct geneTree* getGeneTree(double lower, double upper, struct coalescent_events* coalescent_list, const bitarray* mrca);
 
 unsigned long long int ipow( unsigned long long int base, int exp);
 
-int TestMRCAForAll(chrsample* chrom, unsigned int mrca);
+int TestMRCAForAll(chrsample* chrom, const bitarray* mrca);
 
 chrsample* create_sample(int noChrom);
 
@@ -133,7 +145,7 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair);
 void addMRCAInterval(struct mrca_list** head, double newlower,
 		     double newupper, double newage);
 
-void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime, unsigned int mrca);
+void getMRCAs(struct mrca_list** head, chrsample* chromSample, double totalTime, const bitarray* mrca);
 
 void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double smalldiff, long chromTotBases,
 		  int seqUnits, char* baseUnit, int prn_mrca, int prn_regions);
@@ -141,9 +153,9 @@ void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double sm
 void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time);
 
 void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
-		    char* baseUnit, unsigned int noSamples, unsigned int mrca);
+		    char* baseUnit, int noSamples, const bitarray* mrca);
 
-void printChromosomes(chrsample* chromSample, unsigned int noSamples);
+void printChromosomes(chrsample* chromSample, int noSamples);
 
 long convertToBases(long totBases, int seqUnit, double value);
 
@@ -173,15 +185,18 @@ char HKYRBase(gsl_rng * r, char currBase, const hky_params_t* params);
 char** simulateSequences(mutation* mutation_list, int totBases, int noSamples,
                          gsl_rng * r, subst_model_t model, const hky_params_t* hky);
 
+/* Deprecated: use bitarray functions instead */
 void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);
 
+/* Use bitarray_is_singleton instead for bitarray types */
 int isSingleton(unsigned int x);
 
-void addNode(unsigned int val, double time, struct tree* lroot);
+void addNode(bitarray* val, double time, struct tree* lroot);
 
 void splitNode(struct tree* lroot);
 
-unsigned int binaryToChrLabel(unsigned int x, int noSamples);
+/* Convert bitarray to chromosome label (returns first set bit index + 1) */
+int binaryToChrLabel(const bitarray* ba);
 
 void fillTips(struct tree* lroot);
 

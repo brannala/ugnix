@@ -8,7 +8,7 @@ PROFILE = -g
 
 # build programs
 
-all: hwe-dis kinship gsum het coalsim pedtrans
+all: hwe-dis kinship gsum het coalsim pedtrans pedsim
 hwe-dis: hwe-dis.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) hwe-dis.o uGnix.o -lglib-2.0 -lm -o hwe-dis
 kinship: kinship.o data.o uGnix.o -lglib-2.0
@@ -17,8 +17,8 @@ het: het.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) het.o uGnix.o -lglib-2.0 -lm -o het
 gsum: gsum.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) gsum.o uGnix.o -lglib-2.0 -lm -o gsum
-coalsim: coalsim.o coalescent.o uGnix.o -lglib-2.0
-	$(CC) $(PROFILE) coalsim.o coalescent.o uGnix.o -lglib-2.0 -lm -lgsl -lgslcblas -o coalsim
+coalsim: coalsim.o coalescent.o bitarray.o uGnix.o -lglib-2.0
+	$(CC) $(PROFILE) coalsim.o coalescent.o bitarray.o uGnix.o -lglib-2.0 -lm -lgsl -lgslcblas -o coalsim
 kinship.o: kinship.c kinship_data.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 data.o: data.c kinship_data.h
@@ -29,9 +29,11 @@ het.o: het.c uGnix.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 gsum.o: gsum.c uGnix.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
-coalsim.o: coalsim.c uGnix.h coalescent.h
+coalsim.o: coalsim.c uGnix.h coalescent.h bitarray.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
-coalescent.o: coalescent.c uGnix.h coalescent.h
+coalescent.o: coalescent.c uGnix.h coalescent.h bitarray.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+bitarray.o: bitarray.c bitarray.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 pedtrans: pedtrans_main.o pedtrans.o -lglib-2.0 -lgsl -lgslcblas
 	$(CC) $(PROFILE) pedtrans_main.o pedtrans.o -lglib-2.0 -lm -lgsl -lgslcblas -o pedtrans
@@ -39,11 +41,17 @@ pedtrans_main.o: pedtrans_main.c pedtrans.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 pedtrans.o: pedtrans.c pedtrans.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim: pedsim_main.o pedsim.o -lgsl -lgslcblas
+	$(CC) $(PROFILE) pedsim_main.o pedsim.o -lm -lgsl -lgslcblas -o pedsim
+pedsim_main.o: pedsim_main.c pedsim.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim.o: pedsim.c pedsim.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans
-	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o
+	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim
+	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o
 tidy:
 	$(RM) *.o
 
@@ -56,9 +64,9 @@ test_ugnix.o: test_ugnix.c uGnix.h unity.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
 unity.o: unity.c unity.h unity_internals.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
-test_coalescent: test_coalescent.o coalescent.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas
-	$(CC) $(PROFILE) test_coalescent.o coalescent.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_coalescent
-test_coalescent.o: test_coalescent.c coalescent.h uGnix.h unity.h
+test_coalescent: test_coalescent.o coalescent.o bitarray.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas
+	$(CC) $(PROFILE) test_coalescent.o coalescent.o bitarray.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_coalescent
+test_coalescent.o: test_coalescent.c coalescent.h bitarray.h uGnix.h unity.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
 test_pedtrans: test_pedtrans.o pedtrans.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas
 	$(CC) $(PROFILE) test_pedtrans.o pedtrans.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_pedtrans

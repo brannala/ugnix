@@ -232,19 +232,17 @@ int main(int argc, char **argv)
       return 1;
     }
 
-  /* check sample size limit - ancestry bits use unsigned int (32-bit) */
-  if(noSamples > 31)
-    {
-      fprintf(stderr, "Error: sample size cannot exceed 31 (current limit due to 32-bit ancestry tracking).\n");
-      free(outfile);
-      return 1;
-    }
+  /* Set global sample size for bitarray allocation */
+  g_noSamples = noSamples;
+
+  /* Initialize bitarray memory pool for efficient allocation */
+  bitarray_pool_init(noSamples);
 
  /* create a generator chosen by the
     environment variable GSL_RNG_TYPE */
   gsl_rng_env_setup();
 
-  // gsl_rng_default_seed = 45567; 
+  // gsl_rng_default_seed = 45567;
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
   if(RGSeed != 0)
@@ -254,7 +252,9 @@ int main(int argc, char **argv)
   recombination_event recombEvent;
   chrsample* chromSample = create_sample(noChrom);
   struct coalescent_events* coalescent_list = NULL;
+  struct coalescent_events* coalescent_list_tail = NULL;  /* tail pointer for O(1) append */
   mutation* mutation_list = NULL;
+  mutation* mutation_list_tail = NULL;  /* tail pointer for O(1) append */
   char** sequences;
   double ancLength=0;
   double eventLocation=0;
@@ -269,11 +269,8 @@ int main(int argc, char **argv)
   int noCoal=0;
   struct mrca_list* head = NULL;
   struct mrca_summary* mrca_head = NULL;
-  unsigned int mrca=0;
-  for(unsigned int i=0; i <noSamples; i++)
-    {
-      mrca += ipow(2,i);
-    }
+  /* Create MRCA bitarray with all sample bits set */
+  bitarray* mrca = bitarray_full(noSamples);
   long chromTotBases = recRate*100*cMtoMb*1e6;
 
   /* Initialize HKY parameters if needed */
@@ -299,6 +296,9 @@ int main(int argc, char **argv)
     fprintf(stderr, "Starting simulation: n=%d, N=%.0f, r=%.4f, m=%.4f\n",
             noSamples, popSize, recRate, mutRate);
 
+  /* Initialize ancLength cache (create_sample sets it to noChrom) */
+  ancLength = getAncLength(chromSample);
+
   while((noChrom > 1) && (!TestMRCAForAll(chromSample, mrca)) )
   {
     double prob = 0;
@@ -309,7 +309,8 @@ int main(int argc, char **argv)
       fprintf(stderr, "\r  Events: %d | Chrom: %d | Coal: %d | Rec: %d | Mut: %d | Time: %.1f  ",
               eventNo, noChrom, noCoal, noRec, noMutations, totalTime);
 
-    ancLength = calcAncLength(chromSample);
+    /* Use cached ancLength (updated incrementally by coalescence) */
+    ancLength = getAncLength(chromSample);
     assert(ancLength <= noSamples);
     totRate = (noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize))+(recRate +mutRate)*ancLength;
     coalProb = ((noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize)))/totRate;
@@ -325,8 +326,8 @@ int main(int argc, char **argv)
 	getCoalPair(r,noChrom,&pair);
 	coalescence(pair,&noChrom, chromSample);
 	if(prn_genetrees)
-	    updateCoalescentEvents(&coalescent_list,chromSample,totalTime);
-      	if(calc_mrca || prn_genetrees) 
+	    updateCoalescentEvents(&coalescent_list, &coalescent_list_tail, chromSample, totalTime);
+      	if(calc_mrca || prn_genetrees)
 	  getMRCAs(&head,chromSample,totalTime,mrca);
 	noCoal++;
       } 
@@ -344,19 +345,20 @@ int main(int argc, char **argv)
 	/* mutation event */
 	{
 	  mutation* tmpMut = malloc(sizeof(mutation));
-	  mutation* mcurr;
 	  tmpMut->next = NULL;
 	  eventLocation = ancLength*gsl_rng_uniform_pos(r);
 	  assert(eventLocation <= ancLength);
 	  getMutEvent(chromSample, eventLocation, tmpMut, totalTime);
+	  /* O(1) append using tail pointer */
 	  if(mutation_list == NULL)
-	    mutation_list = tmpMut;
+	    {
+	      mutation_list = tmpMut;
+	      mutation_list_tail = tmpMut;
+	    }
 	  else
 	    {
-	      mcurr = mutation_list;
-	      while(mcurr->next != NULL)
-		mcurr = mcurr->next;
-	      mcurr->next = tmpMut;
+	      mutation_list_tail->next = tmpMut;
+	      mutation_list_tail = tmpMut;
 	    }
 	  noMutations++;
 	}
@@ -506,6 +508,9 @@ int main(int argc, char **argv)
     fclose(mrca_file);
 
   gsl_rng_free(r);
+
+  /* Clean up bitarray memory pool */
+  bitarray_pool_destroy();
 
   return 0;
 }
