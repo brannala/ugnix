@@ -189,6 +189,48 @@ char** simulateSequences(mutation* mutation_list, int totBases, int noSamples,
 void writeVCF(mutation* mutation_list, long chromTotBases, int noSamples,
               const bitarray* mrca, FILE* out, gsl_rng* r);
 
+/*
+ * Target regions for sparse coalescent simulation.
+ * When target regions are specified, the simulation terminates once
+ * all target regions have reached MRCA, rather than waiting for the
+ * entire chromosome. This can dramatically speed up simulations for
+ * long chromosomes when only specific regions are of interest.
+ */
+typedef struct {
+    double start;    /* Start position (0-1 scale) */
+    double end;      /* End position (0-1 scale) */
+} target_region;
+
+typedef struct {
+    target_region* regions;
+    int n_regions;
+    int active;      /* 1 if sparse mode, 0 for full simulation */
+    double min_start; /* Cached: minimum start across all regions */
+    double max_end;   /* Cached: maximum end across all regions */
+} target_region_set;
+
+/* Create target region set from parameters:
+ * n_regions: number of target regions
+ * region_length: length of each region (in 0-1 scale, e.g., 0.0001 for 0.01 cM)
+ * first_start: start position of first region
+ * spacing: distance between region starts (0 = evenly distributed)
+ */
+target_region_set* create_target_regions(int n_regions, double region_length,
+                                         double first_start, double spacing);
+
+/* Create target region set from file (one region per line: start end) */
+target_region_set* load_target_regions(const char* filename);
+
+/* Free target region set */
+void free_target_regions(target_region_set* regions);
+
+/* Test if all target regions have reached MRCA.
+ * Returns 1 if all target regions have MRCA, 0 otherwise.
+ * If regions is NULL or not active, falls back to TestMRCAForAll behavior.
+ */
+int TestMRCAForTargetRegions(chrsample* chrom, const bitarray* mrca,
+                             const target_region_set* regions);
+
 /* Deprecated: use bitarray functions instead */
 void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);
 

@@ -1376,3 +1376,197 @@ char** simulateSequences(mutation* mutation_list, int totBases, int noSamples,
     }
   return sequences;
 }
+
+/*
+ * Target region support for sparse coalescent simulation
+ */
+
+target_region_set* create_target_regions(int n_regions, double region_length,
+                                         double first_start, double spacing)
+{
+    if (n_regions <= 0 || region_length <= 0) return NULL;
+
+    target_region_set* trs = malloc(sizeof(target_region_set));
+    if (!trs) return NULL;
+
+    trs->regions = malloc(n_regions * sizeof(target_region));
+    if (!trs->regions) {
+        free(trs);
+        return NULL;
+    }
+
+    trs->n_regions = n_regions;
+    trs->active = 1;
+
+    double pos = first_start;
+    double actual_spacing = spacing;
+
+    /* If spacing is 0, distribute evenly across [0, 1] */
+    if (spacing <= 0 && n_regions > 1) {
+        /* Leave room for regions at both ends */
+        actual_spacing = (1.0 - region_length - 2 * first_start) / (n_regions - 1);
+        if (actual_spacing < region_length) {
+            /* Regions would overlap, just space them by region_length */
+            actual_spacing = region_length;
+        }
+    } else if (spacing <= 0) {
+        actual_spacing = 0;  /* Single region case */
+    }
+
+    for (int i = 0; i < n_regions; i++) {
+        trs->regions[i].start = pos;
+        trs->regions[i].end = pos + region_length;
+        /* Clamp to [0, 1] */
+        if (trs->regions[i].end > 1.0) {
+            trs->regions[i].end = 1.0;
+        }
+        pos += actual_spacing;
+    }
+
+    /* Cache bounds for fast rejection testing */
+    trs->min_start = trs->regions[0].start;
+    trs->max_end = trs->regions[n_regions - 1].end;
+
+    return trs;
+}
+
+target_region_set* load_target_regions(const char* filename)
+{
+    FILE* fp = fopen(filename, "r");
+    if (!fp) return NULL;
+
+    /* First pass: count lines */
+    int n_regions = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        n_regions++;
+    }
+
+    if (n_regions == 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    target_region_set* trs = malloc(sizeof(target_region_set));
+    if (!trs) {
+        fclose(fp);
+        return NULL;
+    }
+
+    trs->regions = malloc(n_regions * sizeof(target_region));
+    if (!trs->regions) {
+        free(trs);
+        fclose(fp);
+        return NULL;
+    }
+
+    /* Second pass: read regions */
+    rewind(fp);
+    int i = 0;
+    while (fgets(line, sizeof(line), fp) && i < n_regions) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        double start, end;
+        if (sscanf(line, "%lf %lf", &start, &end) == 2) {
+            trs->regions[i].start = start;
+            trs->regions[i].end = end;
+            i++;
+        }
+    }
+
+    trs->n_regions = i;
+    trs->active = 1;
+
+    /* Cache bounds for fast rejection testing */
+    if (i > 0) {
+        trs->min_start = trs->regions[0].start;
+        trs->max_end = trs->regions[0].end;
+        for (int j = 1; j < i; j++) {
+            if (trs->regions[j].start < trs->min_start)
+                trs->min_start = trs->regions[j].start;
+            if (trs->regions[j].end > trs->max_end)
+                trs->max_end = trs->regions[j].end;
+        }
+    }
+
+    fclose(fp);
+    return trs;
+}
+
+void free_target_regions(target_region_set* trs)
+{
+    if (!trs) return;
+    free(trs->regions);
+    free(trs);
+}
+
+/*
+ * Test if all target regions have reached MRCA.
+ *
+ * Optimizations:
+ * 1. Use cached min_start/max_end for quick segment rejection
+ * 2. Early exit when segment starts past all targets (segments are sorted)
+ * 3. Inline overlap check for single target region (common case)
+ */
+int TestMRCAForTargetRegions(chrsample* chrom, const bitarray* mrca,
+                             const target_region_set* trs)
+{
+    /* If no target regions or not active, fall back to full check */
+    if (!trs || !trs->active || trs->n_regions == 0) {
+        return TestMRCAForAll(chrom, mrca);
+    }
+
+    const double min_start = trs->min_start;
+    const double max_end = trs->max_end;
+    const int n_regions = trs->n_regions;
+    const target_region* regions = trs->regions;
+
+    for (int i = 0; i < chrom->count; i++) {
+        ancestry* tmp_anc = chrom->chrs[i]->anc;
+        double last_pos = 0.0;
+
+        while (tmp_anc != NULL) {
+            double seg_end = tmp_anc->position;
+
+            /* Quick rejection: segment entirely before all targets */
+            if (seg_end <= min_start) {
+                last_pos = seg_end;
+                tmp_anc = tmp_anc->next;
+                continue;
+            }
+
+            /* Early exit: segment starts after all targets (segments are sorted) */
+            if (last_pos >= max_end) {
+                break;
+            }
+
+            /* Check overlap with target regions */
+            int overlaps = 0;
+            if (n_regions == 1) {
+                /* Fast path for single region (common case) */
+                overlaps = (last_pos < regions[0].end && seg_end > regions[0].start);
+            } else {
+                /* Multiple regions: linear scan (could use binary search if many) */
+                for (int j = 0; j < n_regions; j++) {
+                    if (last_pos < regions[j].end && seg_end > regions[j].start) {
+                        overlaps = 1;
+                        break;
+                    }
+                }
+            }
+
+            if (overlaps) {
+                /* Check if this segment has reached MRCA */
+                if (!bitarray_is_zero(tmp_anc->abits) &&
+                    !bitarray_equal(tmp_anc->abits, mrca)) {
+                    return 0;  /* Not MRCA yet for this target region */
+                }
+            }
+
+            last_pos = seg_end;
+            tmp_anc = tmp_anc->next;
+        }
+    }
+
+    return 1;  /* All target regions have MRCA */
+}

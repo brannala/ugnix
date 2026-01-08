@@ -35,6 +35,14 @@ double hky_piC = 0.25;
 double hky_piG = 0.25;
 double hky_piT = 0.25;
 
+/* Target region settings for sparse simulation */
+int use_target_regions = 0;
+char* target_regions_file = NULL;
+int target_n_regions = 0;
+double target_region_length = 0.0001;  /* default: 0.01 cM = 10kb at 1cM/Mb */
+double target_first_start = 0.01;      /* default: start at 1% into chromosome */
+double target_spacing = 0;             /* default: evenly distributed */
+
 /* Progress reporting interval (events) */
 #define PROGRESS_INTERVAL 10000
 
@@ -61,7 +69,17 @@ static void print_help()
 	 "-M <substitution model: JC69 (default) or HKY>\n"
 	 "-k <kappa: transition/transversion ratio for HKY (default 2.0)>\n"
 	 "-p <base frequencies piA,piC,piG,piT for HKY (default 0.25,0.25,0.25,0.25)>\n"
-	 "-v verbose progress output\n");
+	 "-v verbose progress output\n"
+	 "\nSparse simulation (target regions):\n"
+	 "-T <n,len,start,gap> Generate n target regions of length len (in cM/100),\n"
+	 "                     starting at position start, separated by gap.\n"
+	 "                     If gap=0, regions are evenly distributed.\n"
+	 "                     Example: -T 100,0.0001,0.01,0 for 100 regions of 0.01 cM\n"
+	 "-R <file>            Load target regions from file (one per line: start end)\n"
+	 "\n"
+	 "When target regions are specified, simulation terminates when all target\n"
+	 "regions reach MRCA, rather than the entire chromosome. This dramatically\n"
+	 "speeds up simulations for long chromosomes.\n");
 }
 
 int main(int argc, char **argv)
@@ -84,7 +102,7 @@ int main(int argc, char **argv)
   const gsl_rng_type * T;
   
 
-  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:V:g:M:k:p:dlhv")) != -1)
+  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:V:g:M:k:p:T:R:dlhv")) != -1)
     switch(c)
       {
       case 'c':
@@ -220,6 +238,29 @@ int main(int argc, char **argv)
 	    }
 	}
 	break;
+      case 'T':
+	{
+	  /* Parse target region parameters: n,len,start,gap */
+	  int n;
+	  double len, start, gap;
+	  if (sscanf(optarg, "%d,%lf,%lf,%lf", &n, &len, &start, &gap) >= 2) {
+	    target_n_regions = n;
+	    target_region_length = len;
+	    if (sscanf(optarg, "%d,%lf,%lf,%lf", &n, &len, &start, &gap) >= 3)
+	      target_first_start = start;
+	    if (sscanf(optarg, "%d,%lf,%lf,%lf", &n, &len, &start, &gap) >= 4)
+	      target_spacing = gap;
+	    use_target_regions = 1;
+	  } else {
+	    fprintf(stderr, "Error: -T requires at least n,len (e.g., -T 100,0.0001)\n");
+	    return 1;
+	  }
+	}
+	break;
+      case 'R':
+	target_regions_file = optarg;
+	use_target_regions = 1;
+	break;
       case 'h':
 	opt_help = 1;
 	break;
@@ -292,6 +333,41 @@ int main(int argc, char **argv)
   if (subst_model == SUBST_HKY)
     initHKYParams(&hky_params, hky_kappa, hky_piA, hky_piC, hky_piG, hky_piT);
 
+  /* Initialize target regions for sparse simulation */
+  target_region_set* target_regions = NULL;
+  if (use_target_regions) {
+    if (target_regions_file) {
+      target_regions = load_target_regions(target_regions_file);
+      if (!target_regions) {
+        fprintf(stderr, "Error: failed to load target regions from %s\n",
+                target_regions_file);
+        return 1;
+      }
+      fprintf(stderr, "Sparse simulation: loaded %d target regions from %s\n",
+              target_regions->n_regions, target_regions_file);
+    } else if (target_n_regions > 0) {
+      target_regions = create_target_regions(target_n_regions, target_region_length,
+                                             target_first_start, target_spacing);
+      if (!target_regions) {
+        fprintf(stderr, "Error: failed to create target regions\n");
+        return 1;
+      }
+      fprintf(stderr, "Sparse simulation: %d target regions, length=%.6f, start=%.4f\n",
+              target_regions->n_regions, target_region_length, target_first_start);
+      /* Print first few and last region for verification */
+      if (opt_verbose && target_regions->n_regions > 0) {
+        fprintf(stderr, "  Region 0: [%.6f, %.6f]\n",
+                target_regions->regions[0].start, target_regions->regions[0].end);
+        if (target_regions->n_regions > 1) {
+          fprintf(stderr, "  Region %d: [%.6f, %.6f]\n",
+                  target_regions->n_regions - 1,
+                  target_regions->regions[target_regions->n_regions - 1].start,
+                  target_regions->regions[target_regions->n_regions - 1].end);
+        }
+      }
+    }
+  }
+
   char* baseUnit = malloc(sizeof(char)*5);
   if(seqUnits == 1)
     strcpy(baseUnit,"bps");
@@ -313,7 +389,7 @@ int main(int argc, char **argv)
   /* Initialize ancLength cache (create_sample sets it to noChrom) */
   ancLength = getAncLength(chromSample);
 
-  while((noChrom > 1) && (!TestMRCAForAll(chromSample, mrca)) )
+  while((noChrom > 1) && (!TestMRCAForTargetRegions(chromSample, mrca, target_regions)) )
   {
     double prob = 0;
     eventNo++;
@@ -385,6 +461,9 @@ int main(int argc, char **argv)
 
   /* summarize run input and output */
   printf("N:%.0f n:%d r:%.2f ",popSize,noSamples,recRate);
+  if (target_regions) {
+    printf("Target_Regions: %d ", target_regions->n_regions);
+  }
   printf("Mutation_Rate: %.3e/Chr",mutRate);
   if(seqUnits)
     printf(" %.3e/base",mutRate/chromTotBases);
@@ -531,6 +610,11 @@ int main(int argc, char **argv)
     fclose(mrca_file);
 
   gsl_rng_free(r);
+
+  /* Clean up target regions */
+  if (target_regions) {
+    free_target_regions(target_regions);
+  }
 
   /* Clean up bitarray memory pool */
   bitarray_pool_destroy();
