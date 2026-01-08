@@ -23,14 +23,12 @@ founder_vcf* read_founder_vcf(const char* filename)
     /* Parse header */
     while (fgets(line, sizeof(line), fp)) {
         if (strncmp(line, "##contig", 8) == 0) {
-            /* Extract chromosome length */
             char* len_ptr = strstr(line, "length=");
             if (len_ptr) {
                 fvcf->chrom_length = atol(len_ptr + 7);
             }
         }
         else if (line[0] == '#' && line[1] != '#') {
-            /* Header line with sample names */
             char* tok = strtok(line, "\t\n");
             int col = 0;
             int sample_capacity = 64;
@@ -100,7 +98,6 @@ founder_vcf* read_founder_vcf(const char* filename)
     return fvcf;
 }
 
-/* Free founder VCF */
 void free_founder_vcf(founder_vcf* fvcf)
 {
     if (!fvcf) return;
@@ -124,19 +121,18 @@ typedef struct {
     int n_founders;
 } founder_map;
 
-/* Parse founder list from pedtrans header: "# Founders: I35 I37 ..." */
 static founder_map* parse_founder_list(FILE* fp)
 {
     char line[MAX_LINE_LENGTH];
     founder_map* fm = malloc(sizeof(founder_map));
-    fm->names = malloc(256 * sizeof(char*));
+    fm->names = malloc(1024 * sizeof(char*));
     fm->n_founders = 0;
 
     rewind(fp);
     while (fgets(line, sizeof(line), fp)) {
         if (strncmp(line, "# Founders:", 11) == 0) {
             char* tok = strtok(line + 11, " \t\n");
-            while (tok && fm->n_founders < 256) {
+            while (tok && fm->n_founders < 1024) {
                 fm->names[fm->n_founders] = strdup(tok);
                 fm->n_founders++;
                 tok = strtok(NULL, " \t\n");
@@ -158,10 +154,8 @@ static void free_founder_map(founder_map* fm)
     free(fm);
 }
 
-/* Get VCF haplotype index from founder:homolog (e.g., "I35:pat") */
 static int get_vcf_haplotype_idx(founder_map* fm, const char* founder_hom)
 {
-    /* Parse "I35:pat" or "I35:mat" */
     char founder[MAX_NAME_LENGTH];
     char homolog[16];
 
@@ -169,7 +163,6 @@ static int get_vcf_haplotype_idx(founder_map* fm, const char* founder_hom)
         return -1;
     }
 
-    /* Find founder index */
     int founder_idx = -1;
     for (int i = 0; i < fm->n_founders; i++) {
         if (strcmp(fm->names[i], founder) == 0) {
@@ -182,13 +175,10 @@ static int get_vcf_haplotype_idx(founder_map* fm, const char* founder_hom)
         return -1;
     }
 
-    /* pat=0, mat=1 */
     int hom = (strcmp(homolog, "mat") == 0) ? 1 : 0;
-
     return founder_idx * 2 + hom;
 }
 
-/* Read pedtrans segment output */
 pedtrans_segments* read_pedtrans_segments(const char* filename)
 {
     FILE* fp = fopen(filename, "r");
@@ -197,7 +187,6 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
         return NULL;
     }
 
-    /* Parse founder list first */
     founder_map* fm = parse_founder_list(fp);
 
     pedtrans_segments* pts = malloc(sizeof(pedtrans_segments));
@@ -206,26 +195,21 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
     pts->capacity = INITIAL_CAPACITY;
     pts->sample_names = malloc(INITIAL_CAPACITY * sizeof(char*));
     pts->n_samples = 0;
-
-    /* Store founder map in pts for later use */
     pts->founder_map = fm;
 
     char line[MAX_LINE_LENGTH];
     char current_individual[MAX_NAME_LENGTH] = "";
-    int current_homolog = -1;  /* 0=paternal, 1=maternal */
+    int current_homolog = -1;
     sample_chrom* current = NULL;
     int sample_capacity = INITIAL_CAPACITY;
 
     while (fgets(line, sizeof(line), fp)) {
-        /* Skip comments and empty lines */
         if (line[0] == '#' || line[0] == '\n') continue;
 
-        /* Check for "Individual: NAME" */
         if (strncmp(line, "Individual:", 11) == 0) {
             sscanf(line + 11, " %s", current_individual);
             current_homolog = -1;
 
-            /* Track unique sample names */
             int found = 0;
             for (int i = 0; i < pts->n_samples; i++) {
                 if (strcmp(pts->sample_names[i], current_individual) == 0) {
@@ -245,14 +229,12 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
             continue;
         }
 
-        /* Check for "  Paternal:" or "  Maternal:" */
         char* trimmed = line;
         while (*trimmed == ' ') trimmed++;
 
         if (strncmp(trimmed, "Paternal:", 9) == 0) {
             current_homolog = 0;
 
-            /* Create new sample_chrom entry */
             if (pts->n_chroms >= pts->capacity) {
                 pts->capacity *= 2;
                 pts->chroms = realloc(pts->chroms,
@@ -272,7 +254,6 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
         if (strncmp(trimmed, "Maternal:", 9) == 0) {
             current_homolog = 1;
 
-            /* Create new sample_chrom entry */
             if (pts->n_chroms >= pts->capacity) {
                 pts->capacity *= 2;
                 pts->chroms = realloc(pts->chroms,
@@ -289,7 +270,6 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
             continue;
         }
 
-        /* Parse segment line: "    0.000000 1.000000 I35:pat" */
         if (current && current_homolog >= 0) {
             double start, end;
             char founder_hom[MAX_NAME_LENGTH];
@@ -304,8 +284,6 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
                 segment* seg = &current->segments[current->n_segments];
                 seg->start = start;
                 seg->end = end;
-
-                /* Store the founder:homolog string for later lookup */
                 strncpy(seg->founder, founder_hom, MAX_NAME_LENGTH - 1);
                 seg->founder[MAX_NAME_LENGTH - 1] = '\0';
                 seg->homolog = get_vcf_haplotype_idx(fm, founder_hom);
@@ -319,7 +297,6 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
     return pts;
 }
 
-/* Free pedtrans segments */
 void free_pedtrans_segments(pedtrans_segments* pts)
 {
     if (!pts) return;
@@ -341,42 +318,115 @@ void free_pedtrans_segments(pedtrans_segments* pts)
     free(pts);
 }
 
-/* Check if position falls within segment */
-static int position_in_segment(long pos, long chrom_length, segment* seg)
-{
-    double pos_frac = (double)pos / chrom_length;
-    return (pos_frac >= seg->start && pos_frac < seg->end);
-}
-
-/* Get VCF haplotype index for a sample at a given position */
-static int get_sample_haplotype_at_pos(pedtrans_segments* pts, long chrom_length,
-                                       const char* sample, int homolog, long pos)
-{
-    for (int i = 0; i < pts->n_chroms; i++) {
-        if (strcmp(pts->chroms[i].name, sample) == 0 &&
-            pts->chroms[i].homolog == homolog) {
-
-            for (int j = 0; j < pts->chroms[i].n_segments; j++) {
-                segment* seg = &pts->chroms[i].segments[j];
-                if (position_in_segment(pos, chrom_length, seg)) {
-                    return seg->homolog;  /* Already contains VCF index */
-                }
-            }
-        }
-    }
-    return -1;
-}
-
-/* Get founder haplotype index (not used with new format, kept for API) */
 int get_founder_haplotype_idx(founder_vcf* fvcf, const char* founder, int homolog)
 {
     (void)fvcf;
     (void)founder;
     (void)homolog;
-    return -1;  /* Use segment->homolog directly instead */
+    return -1;
 }
 
-/* Assemble sample VCF from founder VCF and pedtrans segments */
+/*
+ * ============================================================================
+ * OPTIMIZED ASSEMBLY - O(1) sample lookup + binary search for segments
+ * ============================================================================
+ */
+
+/* Fast lookup table: sample_idx -> (paternal_chrom_idx, maternal_chrom_idx) */
+typedef struct {
+    int pat_idx;  /* index into pts->chroms for paternal, or -1 */
+    int mat_idx;  /* index into pts->chroms for maternal, or -1 */
+} sample_lookup_entry;
+
+typedef struct {
+    sample_lookup_entry* entries;  /* indexed by output sample index */
+    int n_entries;
+} sample_lookup_table;
+
+/* Build fast lookup table for samples */
+static sample_lookup_table* build_sample_lookup(pedtrans_segments* pts,
+                                                  char** output_samples,
+                                                  int n_output)
+{
+    sample_lookup_table* lut = malloc(sizeof(sample_lookup_table));
+    lut->entries = malloc(n_output * sizeof(sample_lookup_entry));
+    lut->n_entries = n_output;
+
+    /* Initialize all to -1 */
+    for (int i = 0; i < n_output; i++) {
+        lut->entries[i].pat_idx = -1;
+        lut->entries[i].mat_idx = -1;
+    }
+
+    /* Build lookup by scanning chromosomes once */
+    for (int c = 0; c < pts->n_chroms; c++) {
+        sample_chrom* chr = &pts->chroms[c];
+
+        /* Find which output sample this belongs to */
+        for (int s = 0; s < n_output; s++) {
+            if (strcmp(output_samples[s], chr->name) == 0) {
+                if (chr->homolog == 0) {
+                    lut->entries[s].pat_idx = c;
+                } else {
+                    lut->entries[s].mat_idx = c;
+                }
+                break;
+            }
+        }
+    }
+
+    return lut;
+}
+
+static void free_sample_lookup(sample_lookup_table* lut)
+{
+    if (!lut) return;
+    free(lut->entries);
+    free(lut);
+}
+
+/* Binary search to find segment containing position (as fraction 0-1) */
+static inline int find_segment_binary(segment* segments, int n_segments, double pos_frac)
+{
+    int lo = 0, hi = n_segments - 1;
+
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        segment* seg = &segments[mid];
+
+        if (pos_frac < seg->start) {
+            hi = mid - 1;
+        } else if (pos_frac >= seg->end) {
+            lo = mid + 1;
+        } else {
+            /* pos_frac is within [start, end) */
+            return seg->homolog;
+        }
+    }
+
+    return -1;  /* Not found (gap in segments) */
+}
+
+/* Get VCF haplotype index using precomputed lookup table */
+static inline int get_haplotype_fast(pedtrans_segments* pts,
+                                      sample_lookup_table* lut,
+                                      int sample_idx, int homolog,
+                                      double pos_frac)
+{
+    int chrom_idx;
+    if (homolog == 0) {
+        chrom_idx = lut->entries[sample_idx].pat_idx;
+    } else {
+        chrom_idx = lut->entries[sample_idx].mat_idx;
+    }
+
+    if (chrom_idx < 0) return -1;
+
+    sample_chrom* chr = &pts->chroms[chrom_idx];
+    return find_segment_binary(chr->segments, chr->n_segments, pos_frac);
+}
+
+/* Optimized assembly function */
 int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
                         FILE* out, int samples_only)
 {
@@ -385,11 +435,9 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
     int n_output;
 
     if (samples_only) {
-        /* Only output non-founder samples */
         output_samples = malloc(pts->n_samples * sizeof(char*));
         n_output = 0;
 
-        /* Get founder set for filtering */
         founder_map* fm = pts->founder_map;
 
         for (int i = 0; i < pts->n_samples; i++) {
@@ -411,6 +459,12 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
         n_output = pts->n_samples;
     }
 
+    /* Build fast lookup table - O(n_chroms) once */
+    sample_lookup_table* lut = build_sample_lookup(pts, output_samples, n_output);
+
+    /* Pre-allocate genotype array - avoids malloc/free per mutation */
+    int* geno = malloc(n_output * 2 * sizeof(int));
+
     /* Write VCF header */
     fprintf(out, "##fileformat=VCFv4.2\n");
     fprintf(out, "##source=vcfassemble\n");
@@ -423,25 +477,38 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
     }
     fprintf(out, "\n");
 
+    /* Precompute inverse chromosome length */
+    double inv_chrom_length = 1.0 / (double)fvcf->chrom_length;
+    int n_founders = fvcf->n_founder_samples;
+
     /* Process each mutation */
+    int variants_written = 0;
     for (int m = 0; m < fvcf->n_mutations; m++) {
         vcf_mutation* mut = &fvcf->mutations[m];
 
-        /* Collect genotypes for all output samples */
-        int* geno = malloc(n_output * 2 * sizeof(int));
+        /* Convert position to fraction once per mutation */
+        double pos_frac = (double)mut->position * inv_chrom_length;
+
+        /* Collect genotypes using fast lookup */
         int any_variant = 0;
 
         for (int s = 0; s < n_output; s++) {
-            for (int h = 0; h < 2; h++) {
-                int vcf_idx = get_sample_haplotype_at_pos(
-                    pts, fvcf->chrom_length, output_samples[s], h, mut->position);
+            /* Paternal haplotype */
+            int vcf_idx = get_haplotype_fast(pts, lut, s, 0, pos_frac);
+            if (vcf_idx >= 0 && vcf_idx < n_founders) {
+                geno[s * 2] = mut->founder_geno[vcf_idx];
+                if (geno[s * 2]) any_variant = 1;
+            } else {
+                geno[s * 2] = 0;
+            }
 
-                if (vcf_idx >= 0 && vcf_idx < mut->n_founders) {
-                    geno[s * 2 + h] = mut->founder_geno[vcf_idx];
-                    if (geno[s * 2 + h]) any_variant = 1;
-                } else {
-                    geno[s * 2 + h] = 0;
-                }
+            /* Maternal haplotype */
+            vcf_idx = get_haplotype_fast(pts, lut, s, 1, pos_frac);
+            if (vcf_idx >= 0 && vcf_idx < n_founders) {
+                geno[s * 2 + 1] = mut->founder_geno[vcf_idx];
+                if (geno[s * 2 + 1]) any_variant = 1;
+            } else {
+                geno[s * 2 + 1] = 0;
             }
         }
 
@@ -454,10 +521,13 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
                 fprintf(out, "\t%d|%d", geno[s * 2], geno[s * 2 + 1]);
             }
             fprintf(out, "\n");
+            variants_written++;
         }
-
-        free(geno);
     }
+
+    /* Cleanup */
+    free(geno);
+    free_sample_lookup(lut);
 
     if (samples_only) {
         free(output_samples);
