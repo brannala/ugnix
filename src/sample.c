@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <glib.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
 
@@ -22,6 +23,9 @@
 void init_sample_params(sample_params_t* params) {
     params->input_file = NULL;
     params->output_file = NULL;
+    params->input_files = NULL;
+    params->n_input_files = 0;
+    params->output_suffix = NULL;
     params->indiv_file = NULL;
     params->n_markers = 0;
     params->method = METHOD_RANDOM;
@@ -704,4 +708,777 @@ cleanup_error:
     if (indiv_list) free_indiv_list(indiv_list);
     if (rng) gsl_rng_free(rng);
     return 1;
+}
+
+/*
+ * Multi-file marker intersection support
+ */
+
+/* Create string key "chrom:pos" for hash table */
+static char* make_marker_key(const char* chrom, long pos) {
+    char* key = malloc(strlen(chrom) + 32);
+    if (!key) return NULL;
+    sprintf(key, "%s:%ld", chrom, pos);
+    return key;
+}
+
+/* Create marker set from collection */
+marker_set_t* markers_to_set(marker_collection_t* mc) {
+    if (!mc) return NULL;
+
+    marker_set_t* set = malloc(sizeof(marker_set_t));
+    if (!set) return NULL;
+
+    set->table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    if (!set->table) {
+        free(set);
+        return NULL;
+    }
+    set->count = 0;
+
+    for (int c = 0; c < mc->n_chroms; c++) {
+        chrom_markers_t* cm = &mc->chroms[c];
+        for (int m = 0; m < cm->n_markers; m++) {
+            char* key = make_marker_key(cm->chrom, cm->markers[m].pos);
+            if (key && !g_hash_table_contains(set->table, key)) {
+                g_hash_table_insert(set->table, key, GINT_TO_POINTER(1));
+                set->count++;
+            } else if (key) {
+                free(key);  /* duplicate */
+            }
+        }
+    }
+
+    return set;
+}
+
+/* Intersect set with collection, removing markers not in collection */
+void intersect_with_collection(marker_set_t* set, marker_collection_t* mc) {
+    if (!set || !mc) return;
+
+    /* Build hash of markers in collection */
+    GHashTable* mc_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    for (int c = 0; c < mc->n_chroms; c++) {
+        chrom_markers_t* cm = &mc->chroms[c];
+        for (int m = 0; m < cm->n_markers; m++) {
+            char* key = make_marker_key(cm->chrom, cm->markers[m].pos);
+            if (key) {
+                g_hash_table_insert(mc_set, key, GINT_TO_POINTER(1));
+            }
+        }
+    }
+
+    /* Remove from set any markers not in mc_set */
+    GHashTableIter iter;
+    gpointer key, value;
+    GList* to_remove = NULL;
+
+    g_hash_table_iter_init(&iter, set->table);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        if (!g_hash_table_contains(mc_set, key)) {
+            to_remove = g_list_prepend(to_remove, g_strdup((char*)key));
+        }
+    }
+
+    /* Remove the markers not in intersection */
+    for (GList* l = to_remove; l != NULL; l = l->next) {
+        g_hash_table_remove(set->table, l->data);
+        set->count--;
+        g_free(l->data);
+    }
+    g_list_free(to_remove);
+
+    g_hash_table_destroy(mc_set);
+}
+
+/* Check if marker is in set */
+int marker_in_set(marker_set_t* set, const char* chrom, long pos) {
+    if (!set || !chrom) return 0;
+
+    char* key = make_marker_key(chrom, pos);
+    if (!key) return 0;
+
+    int result = g_hash_table_contains(set->table, key);
+    free(key);
+    return result;
+}
+
+/* Free marker set */
+void free_marker_set(marker_set_t* set) {
+    if (!set) return;
+    if (set->table) {
+        g_hash_table_destroy(set->table);
+    }
+    free(set);
+}
+
+/* Helper: comparison function for sorting markers by chrom then pos */
+static int compare_marker_keys(const void* a, const void* b) {
+    const char* key_a = *(const char**)a;
+    const char* key_b = *(const char**)b;
+
+    /* Parse chrom:pos from keys */
+    char chrom_a[256], chrom_b[256];
+    long pos_a, pos_b;
+
+    sscanf(key_a, "%255[^:]:%ld", chrom_a, &pos_a);
+    sscanf(key_b, "%255[^:]:%ld", chrom_b, &pos_b);
+
+    int cmp = strcmp(chrom_a, chrom_b);
+    if (cmp != 0) return cmp;
+    return (pos_a > pos_b) - (pos_a < pos_b);
+}
+
+/* Convert set back to marker collection for selection */
+marker_collection_t* set_to_collection(marker_set_t* set) {
+    if (!set || set->count == 0) return NULL;
+
+    /* Get all keys and sort them */
+    guint size = g_hash_table_size(set->table);
+    char** keys = malloc(sizeof(char*) * size);
+    if (!keys) return NULL;
+
+    GHashTableIter iter;
+    gpointer key, value;
+    int i = 0;
+
+    g_hash_table_iter_init(&iter, set->table);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        keys[i++] = (char*)key;
+    }
+
+    qsort(keys, size, sizeof(char*), compare_marker_keys);
+
+    /* Create marker collection */
+    marker_collection_t* mc = malloc(sizeof(marker_collection_t));
+    if (!mc) {
+        free(keys);
+        return NULL;
+    }
+
+    mc->capacity = 64;
+    mc->n_chroms = 0;
+    mc->chroms = malloc(sizeof(chrom_markers_t) * mc->capacity);
+    if (!mc->chroms) {
+        free(mc);
+        free(keys);
+        return NULL;
+    }
+
+    /* Add markers to collection */
+    char current_chrom[256] = "";
+    chrom_markers_t* current_cm = NULL;
+
+    for (guint j = 0; j < size; j++) {
+        char chrom[256];
+        long pos;
+        sscanf(keys[j], "%255[^:]:%ld", chrom, &pos);
+
+        /* New chromosome? */
+        if (strcmp(chrom, current_chrom) != 0) {
+            /* Expand if needed */
+            if (mc->n_chroms >= mc->capacity) {
+                mc->capacity *= 2;
+                chrom_markers_t* new_chroms = realloc(mc->chroms,
+                    sizeof(chrom_markers_t) * mc->capacity);
+                if (!new_chroms) {
+                    /* cleanup and return partial */
+                    break;
+                }
+                mc->chroms = new_chroms;
+            }
+
+            current_cm = &mc->chroms[mc->n_chroms];
+            current_cm->chrom = strdup(chrom);
+            current_cm->capacity = INITIAL_CAPACITY;
+            current_cm->n_markers = 0;
+            current_cm->markers = malloc(sizeof(marker_info_t) * current_cm->capacity);
+            mc->n_chroms++;
+            strcpy(current_chrom, chrom);
+        }
+
+        /* Add marker */
+        if (current_cm) {
+            if (current_cm->n_markers >= current_cm->capacity) {
+                current_cm->capacity *= 2;
+                marker_info_t* new_markers = realloc(current_cm->markers,
+                    sizeof(marker_info_t) * current_cm->capacity);
+                if (!new_markers) break;
+                current_cm->markers = new_markers;
+            }
+
+            marker_info_t* m = &current_cm->markers[current_cm->n_markers];
+            m->chrom = current_cm->chrom;  /* shared pointer */
+            m->pos = pos;
+            m->file_offset = 0;
+            m->selected = 0;
+            current_cm->n_markers++;
+        }
+    }
+
+    free(keys);
+    return mc;
+}
+
+/* Generate output filename from input file and suffix */
+char* generate_output_filename(const char* input_file, const char* suffix) {
+    if (!input_file || !suffix) return NULL;
+
+    /* Find the base name (remove directory) */
+    const char* basename = strrchr(input_file, '/');
+    if (basename) {
+        basename++;  /* skip the '/' */
+    } else {
+        basename = input_file;
+    }
+
+    /* Find extension (.vcf or .vcf.gz) */
+    const char* ext = NULL;
+    const char* vcf_gz = strstr(basename, ".vcf.gz");
+    const char* vcf = strstr(basename, ".vcf");
+
+    if (vcf_gz) {
+        ext = vcf_gz;
+    } else if (vcf) {
+        ext = vcf;
+    }
+
+    size_t base_len;
+    if (ext) {
+        base_len = ext - basename;
+    } else {
+        base_len = strlen(basename);
+    }
+
+    /* Allocate output: base + suffix + .vcf + null */
+    size_t out_len = base_len + strlen(suffix) + 5;
+    char* output = malloc(out_len);
+    if (!output) return NULL;
+
+    /* Copy base name */
+    strncpy(output, basename, base_len);
+    output[base_len] = '\0';
+
+    /* Append suffix and extension */
+    strcat(output, suffix);
+    strcat(output, ".vcf");
+
+    return output;
+}
+
+/* Collect markers from a VCF file (first pass only) */
+marker_collection_t* collect_markers_from_vcf(const char* filename,
+                                              const vcf_region_t* region,
+                                              int verbose) {
+    FILE* fp = fopen(filename, "r");
+    if (!fp) {
+        fprintf(stderr, "Error: Cannot open file '%s'\n", filename);
+        return NULL;
+    }
+
+    marker_collection_t* mc = malloc(sizeof(marker_collection_t));
+    if (!mc) {
+        fclose(fp);
+        return NULL;
+    }
+
+    mc->capacity = 64;
+    mc->n_chroms = 0;
+    mc->chroms = malloc(sizeof(chrom_markers_t) * mc->capacity);
+    if (!mc->chroms) {
+        free(mc);
+        fclose(fp);
+        return NULL;
+    }
+
+    char* line = malloc(MAX_LINE_LEN);
+    if (!line) {
+        free(mc->chroms);
+        free(mc);
+        fclose(fp);
+        return NULL;
+    }
+
+    int marker_count = 0;
+    while (fgets(line, MAX_LINE_LEN, fp)) {
+        if (line[0] == '#') continue;  /* skip header */
+
+        /* Parse CHROM and POS */
+        char chrom[256];
+        long pos;
+        if (sscanf(line, "%255s\t%ld", chrom, &pos) != 2) continue;
+
+        /* Check region filter */
+        if (region && region->chrom) {
+            if (strcmp(region->chrom, chrom) != 0) continue;
+            if (region->start > 0 && pos < region->start) continue;
+            if (region->end > 0 && pos > region->end) continue;
+        }
+
+        /* Find or create chromosome */
+        chrom_markers_t* cm = NULL;
+        for (int c = 0; c < mc->n_chroms; c++) {
+            if (strcmp(mc->chroms[c].chrom, chrom) == 0) {
+                cm = &mc->chroms[c];
+                break;
+            }
+        }
+
+        if (!cm) {
+            /* Create new chromosome */
+            if (mc->n_chroms >= mc->capacity) {
+                mc->capacity *= 2;
+                chrom_markers_t* new_chroms = realloc(mc->chroms,
+                    sizeof(chrom_markers_t) * mc->capacity);
+                if (!new_chroms) break;
+                mc->chroms = new_chroms;
+            }
+
+            cm = &mc->chroms[mc->n_chroms];
+            cm->chrom = strdup(chrom);
+            cm->capacity = INITIAL_CAPACITY;
+            cm->n_markers = 0;
+            cm->markers = malloc(sizeof(marker_info_t) * cm->capacity);
+            mc->n_chroms++;
+        }
+
+        /* Add marker */
+        if (cm->n_markers >= cm->capacity) {
+            cm->capacity *= 2;
+            marker_info_t* new_markers = realloc(cm->markers,
+                sizeof(marker_info_t) * cm->capacity);
+            if (!new_markers) break;
+            cm->markers = new_markers;
+        }
+
+        marker_info_t* m = &cm->markers[cm->n_markers];
+        m->chrom = cm->chrom;
+        m->pos = pos;
+        m->file_offset = 0;
+        m->selected = 0;
+        cm->n_markers++;
+        marker_count++;
+    }
+
+    free(line);
+    fclose(fp);
+
+    if (verbose) {
+        fprintf(stderr, "  %s: %d markers", filename, marker_count);
+        if (mc->n_chroms > 0) {
+            fprintf(stderr, " across %d chromosomes", mc->n_chroms);
+        }
+        fprintf(stderr, "\n");
+    }
+
+    return mc;
+}
+
+/* Helper: write a single VCF file with selected markers */
+static int write_filtered_vcf(const char* input_file, const char* output_file,
+                              marker_set_t* selected, indiv_list_t* indiv_list,
+                              int verbose) {
+    FILE* in = fopen(input_file, "r");
+    if (!in) {
+        fprintf(stderr, "Error: Cannot open '%s'\n", input_file);
+        return 1;
+    }
+
+    FILE* out = fopen(output_file, "w");
+    if (!out) {
+        fprintf(stderr, "Error: Cannot create '%s'\n", output_file);
+        fclose(in);
+        return 1;
+    }
+
+    char* line = malloc(MAX_LINE_LEN);
+    if (!line) {
+        fclose(in);
+        fclose(out);
+        return 1;
+    }
+
+    char** sample_names = NULL;
+    int n_samples = 0;
+    int* keep_cols = NULL;
+    int n_keep = 0;
+    int markers_written = 0;
+
+    while (fgets(line, MAX_LINE_LEN, in)) {
+        if (line[0] == '#' && line[1] == '#') {
+            /* Meta line - pass through */
+            fprintf(out, "%s", line);
+        } else if (line[0] == '#') {
+            /* Header line - parse samples and filter if needed */
+            if (indiv_list) {
+                /* Parse sample names */
+                char* copy = strdup(line);
+                int col = 0;
+                int capacity = 64;
+                sample_names = malloc(sizeof(char*) * capacity);
+                n_samples = 0;
+
+                char* token = strtok(copy, "\t");
+                while (token) {
+                    if (col >= 9) {
+                        if (n_samples >= capacity) {
+                            capacity *= 2;
+                            sample_names = realloc(sample_names, sizeof(char*) * capacity);
+                        }
+                        /* Remove newline */
+                        size_t len = strlen(token);
+                        while (len > 0 && (token[len-1] == '\n' || token[len-1] == '\r')) {
+                            token[--len] = '\0';
+                        }
+                        sample_names[n_samples++] = strdup(token);
+                    }
+                    token = strtok(NULL, "\t");
+                    col++;
+                }
+                free(copy);
+
+                /* Determine which columns to keep */
+                keep_cols = malloc(sizeof(int) * n_samples);
+                for (int i = 0; i < n_samples; i++) {
+                    keep_cols[i] = indiv_in_list(indiv_list, sample_names[i]);
+                    if (keep_cols[i]) n_keep++;
+                }
+
+                /* Write filtered header */
+                copy = strdup(line);
+                col = 0;
+                int sample_idx = 0;
+                char* start = copy;
+                char* end;
+
+                while (*start) {
+                    end = start;
+                    while (*end && *end != '\t' && *end != '\n' && *end != '\r') end++;
+                    char saved = *end;
+                    *end = '\0';
+
+                    if (col < 9) {
+                        if (col > 0) fprintf(out, "\t");
+                        fprintf(out, "%s", start);
+                    } else {
+                        if (sample_idx < n_samples && keep_cols[sample_idx]) {
+                            fprintf(out, "\t%s", start);
+                        }
+                        sample_idx++;
+                    }
+
+                    if (saved == '\0') break;
+                    start = end + 1;
+                    col++;
+                }
+                fprintf(out, "\n");
+                free(copy);
+            } else {
+                /* No individual filtering, pass through */
+                fprintf(out, "%s", line);
+            }
+        } else {
+            /* Data line - check if marker is selected */
+            char chrom[256];
+            long pos;
+            if (sscanf(line, "%255s\t%ld", chrom, &pos) == 2) {
+                if (marker_in_set(selected, chrom, pos)) {
+                    if (keep_cols) {
+                        /* Filter individuals */
+                        char* copy = strdup(line);
+                        int col = 0;
+                        int sample_idx = 0;
+                        char* start = copy;
+                        char* end;
+
+                        while (*start) {
+                            end = start;
+                            while (*end && *end != '\t' && *end != '\n' && *end != '\r') end++;
+                            char saved = *end;
+                            *end = '\0';
+
+                            if (col < 9) {
+                                if (col > 0) fprintf(out, "\t");
+                                fprintf(out, "%s", start);
+                            } else {
+                                if (sample_idx < n_samples && keep_cols[sample_idx]) {
+                                    fprintf(out, "\t%s", start);
+                                }
+                                sample_idx++;
+                            }
+
+                            if (saved == '\0') break;
+                            start = end + 1;
+                            col++;
+                        }
+                        fprintf(out, "\n");
+                        free(copy);
+                    } else {
+                        /* No individual filtering */
+                        fprintf(out, "%s", line);
+                    }
+                    markers_written++;
+                }
+            }
+        }
+    }
+
+    free(line);
+    if (sample_names) {
+        for (int i = 0; i < n_samples; i++) free(sample_names[i]);
+        free(sample_names);
+    }
+    if (keep_cols) free(keep_cols);
+    fclose(in);
+    fclose(out);
+
+    if (verbose) {
+        fprintf(stderr, "  Wrote %d markers to %s\n", markers_written, output_file);
+    }
+
+    return 0;
+}
+
+/* Multi-file sampling with marker intersection */
+int run_sample_multi(sample_params_t* params) {
+    if (!params || params->n_input_files < 2) {
+        fprintf(stderr, "Error: Multi-file mode requires at least 2 input files\n");
+        return 1;
+    }
+
+    int n_files = params->n_input_files;
+    int verbose = params->verbose;
+
+    /* Initialize RNG */
+    gsl_rng* rng = NULL;
+    gsl_rng_env_setup();
+    rng = gsl_rng_alloc(gsl_rng_default);
+    if (params->seed == 0) {
+        gsl_rng_set(rng, time(NULL));
+    } else {
+        gsl_rng_set(rng, params->seed);
+    }
+
+    /* Load individual list if specified */
+    indiv_list_t* indiv_list = NULL;
+    if (params->indiv_file) {
+        indiv_list = load_indiv_list(params->indiv_file);
+        if (!indiv_list) {
+            fprintf(stderr, "Error: Cannot load individual list from '%s'\n",
+                    params->indiv_file);
+            gsl_rng_free(rng);
+            return 1;
+        }
+        if (verbose) {
+            fprintf(stderr, "Loaded %d individuals from list\n", indiv_list->n_ids);
+        }
+    }
+
+    if (verbose) {
+        fprintf(stderr, "Collecting markers from %d files...\n", n_files);
+    }
+
+    /* Collect markers from all files */
+    marker_collection_t** collections = malloc(sizeof(marker_collection_t*) * n_files);
+    if (!collections) {
+        if (indiv_list) free_indiv_list(indiv_list);
+        gsl_rng_free(rng);
+        return 1;
+    }
+
+    for (int i = 0; i < n_files; i++) {
+        collections[i] = collect_markers_from_vcf(params->input_files[i],
+                                                   &params->region, verbose);
+        if (!collections[i]) {
+            fprintf(stderr, "Error: Failed to read markers from '%s'\n",
+                    params->input_files[i]);
+            for (int j = 0; j < i; j++) {
+                free_marker_collection(collections[j]);
+            }
+            free(collections);
+            if (indiv_list) free_indiv_list(indiv_list);
+            gsl_rng_free(rng);
+            return 1;
+        }
+    }
+
+    /* Compute intersection */
+    if (verbose) {
+        fprintf(stderr, "Computing marker intersection...\n");
+    }
+
+    marker_set_t* intersection = markers_to_set(collections[0]);
+    if (!intersection) {
+        fprintf(stderr, "Error: Failed to create marker set\n");
+        for (int i = 0; i < n_files; i++) {
+            free_marker_collection(collections[i]);
+        }
+        free(collections);
+        if (indiv_list) free_indiv_list(indiv_list);
+        gsl_rng_free(rng);
+        return 1;
+    }
+
+    for (int i = 1; i < n_files; i++) {
+        intersect_with_collection(intersection, collections[i]);
+    }
+
+    if (verbose) {
+        fprintf(stderr, "Intersection: %d markers\n", intersection->count);
+    }
+
+    if (intersection->count == 0) {
+        fprintf(stderr, "Error: No markers shared across all input files\n");
+        free_marker_set(intersection);
+        for (int i = 0; i < n_files; i++) {
+            free_marker_collection(collections[i]);
+        }
+        free(collections);
+        if (indiv_list) free_indiv_list(indiv_list);
+        gsl_rng_free(rng);
+        return 1;
+    }
+
+    /* Convert intersection to collection for selection */
+    marker_collection_t* common = set_to_collection(intersection);
+    if (!common) {
+        fprintf(stderr, "Error: Failed to convert marker set to collection\n");
+        free_marker_set(intersection);
+        for (int i = 0; i < n_files; i++) {
+            free_marker_collection(collections[i]);
+        }
+        free(collections);
+        if (indiv_list) free_indiv_list(indiv_list);
+        gsl_rng_free(rng);
+        return 1;
+    }
+
+    /* Apply selection to intersection */
+    if (verbose) {
+        fprintf(stderr, "Selecting %d markers per chromosome (%s)...\n",
+                params->n_markers,
+                params->method == METHOD_UNIFORM ? "uniform" : "random");
+    }
+
+    int total_selected = 0;
+    for (int c = 0; c < common->n_chroms; c++) {
+        chrom_markers_t* cm = &common->chroms[c];
+        int n_select = params->n_markers;
+
+        /* Warn if fewer markers available than requested */
+        if (cm->n_markers < n_select) {
+            if (verbose) {
+                fprintf(stderr, "  Warning: %s has only %d markers (requested %d)\n",
+                        cm->chrom, cm->n_markers, n_select);
+            }
+            n_select = cm->n_markers;
+        }
+
+        if (params->method == METHOD_UNIFORM) {
+            /* Uniform selection */
+            if (n_select > 0 && cm->n_markers > 0) {
+                if (n_select >= cm->n_markers) {
+                    for (int m = 0; m < cm->n_markers; m++) {
+                        cm->markers[m].selected = 1;
+                    }
+                    total_selected += cm->n_markers;
+                } else {
+                    double step = (double)(cm->n_markers - 1) / (n_select - 1);
+                    for (int i = 0; i < n_select; i++) {
+                        int idx = (int)(i * step + 0.5);
+                        if (idx >= cm->n_markers) idx = cm->n_markers - 1;
+                        cm->markers[idx].selected = 1;
+                    }
+                    total_selected += n_select;
+                }
+            }
+        } else {
+            /* Random selection */
+            if (n_select > 0 && cm->n_markers > 0) {
+                if (n_select >= cm->n_markers) {
+                    for (int m = 0; m < cm->n_markers; m++) {
+                        cm->markers[m].selected = 1;
+                    }
+                    total_selected += cm->n_markers;
+                } else {
+                    int* indices = malloc(sizeof(int) * cm->n_markers);
+                    for (int m = 0; m < cm->n_markers; m++) {
+                        indices[m] = m;
+                    }
+                    /* Partial Fisher-Yates shuffle */
+                    for (int i = 0; i < n_select; i++) {
+                        int j = i + gsl_rng_uniform_int(rng, cm->n_markers - i);
+                        int tmp = indices[i];
+                        indices[i] = indices[j];
+                        indices[j] = tmp;
+                    }
+                    for (int i = 0; i < n_select; i++) {
+                        cm->markers[indices[i]].selected = 1;
+                    }
+                    free(indices);
+                    total_selected += n_select;
+                }
+            }
+        }
+    }
+
+    if (verbose) {
+        fprintf(stderr, "Total selected: %d markers\n", total_selected);
+    }
+
+    /* Create marker set of selected markers for fast lookup */
+    marker_set_t* selected = malloc(sizeof(marker_set_t));
+    selected->table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    selected->count = 0;
+
+    for (int c = 0; c < common->n_chroms; c++) {
+        chrom_markers_t* cm = &common->chroms[c];
+        for (int m = 0; m < cm->n_markers; m++) {
+            if (cm->markers[m].selected) {
+                char* key = make_marker_key(cm->chrom, cm->markers[m].pos);
+                if (key) {
+                    g_hash_table_insert(selected->table, key, GINT_TO_POINTER(1));
+                    selected->count++;
+                }
+            }
+        }
+    }
+
+    /* Write filtered output files */
+    if (verbose) {
+        fprintf(stderr, "Writing output files...\n");
+    }
+
+    int error = 0;
+    for (int i = 0; i < n_files && !error; i++) {
+        char* output_file = generate_output_filename(params->input_files[i],
+                                                      params->output_suffix);
+        if (!output_file) {
+            fprintf(stderr, "Error: Failed to generate output filename\n");
+            error = 1;
+            break;
+        }
+
+        error = write_filtered_vcf(params->input_files[i], output_file,
+                                   selected, indiv_list, verbose);
+        free(output_file);
+    }
+
+    /* Cleanup */
+    free_marker_set(selected);
+    free_marker_collection(common);
+    free_marker_set(intersection);
+    for (int i = 0; i < n_files; i++) {
+        free_marker_collection(collections[i]);
+    }
+    free(collections);
+    if (indiv_list) free_indiv_list(indiv_list);
+    gsl_rng_free(rng);
+
+    if (verbose && !error) {
+        fprintf(stderr, "Done.\n");
+    }
+
+    return error;
 }

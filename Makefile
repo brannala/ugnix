@@ -83,8 +83,8 @@ pedsim_vcf_multipop_main.o: pedsim_vcf_multipop_main.c pedsim_vcf_multipop.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 pedsim_vcf_multipop.o: pedsim_vcf_multipop.c pedsim_vcf_multipop.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
-sample: sample_main.o sample.o -lgsl -lgslcblas
-	$(CC) $(PROFILE) sample_main.o sample.o -lm -lgsl -lgslcblas -o sample
+sample: sample_main.o sample.o -lgsl -lgslcblas -lglib-2.0
+	$(CC) $(PROFILE) sample_main.o sample.o -lm -lgsl -lgslcblas -lglib-2.0 -o sample
 sample_main.o: sample_main.c sample.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 sample.o: sample.c sample.h

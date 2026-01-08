@@ -16,12 +16,14 @@
 #include "sample.h"
 
 static void print_usage(const char* program_name) {
-    fprintf(stderr, "Usage: %s [OPTIONS] INPUT.vcf\n", program_name);
+    fprintf(stderr, "Usage: %s [OPTIONS] INPUT.vcf [INPUT2.vcf [INPUT3.vcf]]\n", program_name);
     fprintf(stderr, "\n");
-    fprintf(stderr, "Subsample individuals and/or markers from a VCF file.\n");
+    fprintf(stderr, "Subsample individuals and/or markers from VCF file(s).\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -o FILE    Output VCF file (default: stdout)\n");
+    fprintf(stderr, "  -o FILE    Output VCF file (single-file mode, default: stdout)\n");
+    fprintf(stderr, "  -O SUFFIX  Output suffix for multi-file mode (e.g., \"_filtered\")\n");
+    fprintf(stderr, "             Creates INPUT_SUFFIX.vcf for each input file\n");
     fprintf(stderr, "  -I FILE    File with individual IDs to keep (one per line)\n");
     fprintf(stderr, "  -n NUM     Number of markers to select per chromosome\n");
     fprintf(stderr, "  -m METHOD  Marker selection method:\n");
@@ -34,18 +36,20 @@ static void print_usage(const char* program_name) {
     fprintf(stderr, "  -v         Verbose output\n");
     fprintf(stderr, "  -h         Show this help message\n");
     fprintf(stderr, "\n");
-    fprintf(stderr, "Examples:\n");
+    fprintf(stderr, "Single-file examples:\n");
     fprintf(stderr, "  %s -I samples.txt input.vcf -o output.vcf\n", program_name);
     fprintf(stderr, "    Keep only individuals listed in samples.txt\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "  %s -n 100 -m u input.vcf -o output.vcf\n", program_name);
     fprintf(stderr, "    Select 100 uniformly-spaced markers per chromosome\n");
     fprintf(stderr, "\n");
-    fprintf(stderr, "  %s -n 50 -m r -R chr1:1000000-5000000 input.vcf\n", program_name);
-    fprintf(stderr, "    Randomly select 50 markers from chr1:1000000-5000000\n");
+    fprintf(stderr, "Multi-file examples (marker intersection):\n");
+    fprintf(stderr, "  %s -n 100 -m u -O \"_common\" pop1.vcf pop2.vcf\n", program_name);
+    fprintf(stderr, "    Select 100 markers shared between pop1 and pop2\n");
+    fprintf(stderr, "    Output: pop1_common.vcf, pop2_common.vcf\n");
     fprintf(stderr, "\n");
-    fprintf(stderr, "  %s -I samples.txt -n 100 -m u input.vcf -o output.vcf\n", program_name);
-    fprintf(stderr, "    Subset both individuals and markers simultaneously\n");
+    fprintf(stderr, "  %s -n 50 -O \"_filt\" pop1.vcf pop2.vcf pop3.vcf\n", program_name);
+    fprintf(stderr, "    Select 50 markers shared across all 3 files\n");
 }
 
 int main(int argc, char* argv[]) {
@@ -54,10 +58,13 @@ int main(int argc, char* argv[]) {
 
     /* Parse command line options */
     int opt;
-    while ((opt = getopt(argc, argv, "o:I:n:m:R:s:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "o:O:I:n:m:R:s:vh")) != -1) {
         switch (opt) {
             case 'o':
                 params.output_file = optarg;
+                break;
+            case 'O':
+                params.output_suffix = optarg;
                 break;
             case 'I':
                 params.indiv_file = optarg;
@@ -109,30 +116,78 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    /* Check for input file argument */
+    /* Check for input file argument(s) */
     if (optind >= argc) {
         fprintf(stderr, "Error: No input VCF file specified\n\n");
         print_usage(argv[0]);
         return 1;
     }
 
-    params.input_file = argv[optind];
+    /* Count input files */
+    int n_files = argc - optind;
+    if (n_files > 3) {
+        fprintf(stderr, "Error: Maximum 3 input files supported\n");
+        return 1;
+    }
+
+    if (n_files == 1) {
+        /* Single-file mode */
+        params.input_file = argv[optind];
+        params.n_input_files = 0;
+    } else {
+        /* Multi-file mode */
+        params.input_files = (const char**)(argv + optind);
+        params.n_input_files = n_files;
+    }
 
     /* Validate options */
-    if (!params.indiv_file && params.n_markers == 0 && !params.region.chrom) {
-        fprintf(stderr, "Error: No subsetting options specified.\n");
-        fprintf(stderr, "Use -I for individuals, -n for markers, or -R for region.\n\n");
-        print_usage(argv[0]);
-        return 1;
+    if (n_files > 1) {
+        /* Multi-file mode validations */
+        if (!params.output_suffix) {
+            fprintf(stderr, "Error: -O (output suffix) required for multi-file mode\n");
+            fprintf(stderr, "Example: -O \"_filtered\"\n\n");
+            print_usage(argv[0]);
+            return 1;
+        }
+        if (params.output_file) {
+            fprintf(stderr, "Error: -o and -O are mutually exclusive\n");
+            fprintf(stderr, "Use -o for single file, -O for multiple files\n");
+            return 1;
+        }
+        if (params.n_markers == 0) {
+            fprintf(stderr, "Error: -n (number of markers) required for multi-file mode\n");
+            return 1;
+        }
+    } else {
+        /* Single-file mode validations */
+        if (params.output_suffix) {
+            fprintf(stderr, "Error: -O requires multiple input files\n");
+            fprintf(stderr, "Use -o for single file output\n");
+            return 1;
+        }
+        if (!params.indiv_file && params.n_markers == 0 && !params.region.chrom) {
+            fprintf(stderr, "Error: No subsetting options specified.\n");
+            fprintf(stderr, "Use -I for individuals, -n for markers, or -R for region.\n\n");
+            print_usage(argv[0]);
+            return 1;
+        }
     }
 
     if (params.verbose) {
         fprintf(stderr, "sample - VCF Subsampling Tool\n");
-        fprintf(stderr, "Input file: %s\n", params.input_file);
-        if (params.output_file) {
-            fprintf(stderr, "Output file: %s\n", params.output_file);
+        if (params.n_input_files > 0) {
+            fprintf(stderr, "Mode: multi-file (%d files)\n", params.n_input_files);
+            for (int i = 0; i < params.n_input_files; i++) {
+                fprintf(stderr, "  Input %d: %s\n", i + 1, params.input_files[i]);
+            }
+            fprintf(stderr, "Output suffix: %s\n", params.output_suffix);
         } else {
-            fprintf(stderr, "Output: stdout\n");
+            fprintf(stderr, "Input file: %s\n", params.input_file);
+            if (params.output_file) {
+                fprintf(stderr, "Output file: %s\n", params.output_file);
+            } else {
+                fprintf(stderr, "Output: stdout\n");
+            }
         }
         if (params.indiv_file) {
             fprintf(stderr, "Individual list: %s\n", params.indiv_file);
@@ -156,7 +211,12 @@ int main(int argc, char* argv[]) {
     }
 
     /* Run sampling */
-    int result = run_sample(&params);
+    int result;
+    if (params.n_input_files > 0) {
+        result = run_sample_multi(&params);
+    } else {
+        result = run_sample(&params);
+    }
 
     /* Cleanup */
     free_region(&params.region);

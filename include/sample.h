@@ -11,6 +11,7 @@
 #define SAMPLE_H
 
 #include <stdio.h>
+#include <glib.h>
 
 /* Marker selection methods */
 typedef enum {
@@ -32,9 +33,14 @@ typedef struct {
  * Parameters for VCF sampling.
  */
 typedef struct {
-    /* Input/output */
-    const char* input_file;       /* input VCF file */
+    /* Input/output - single file mode */
+    const char* input_file;       /* input VCF file (single-file mode) */
     const char* output_file;      /* output VCF file (NULL = stdout) */
+
+    /* Input/output - multi-file mode */
+    const char** input_files;     /* array of input VCF files */
+    int n_input_files;            /* number of input files (0 = single-file mode) */
+    const char* output_suffix;    /* output suffix for multi-file mode (e.g., "_filtered") */
 
     /* Individual subsetting */
     const char* indiv_file;       /* file with individual IDs (NULL = keep all) */
@@ -88,6 +94,15 @@ typedef struct {
 } marker_collection_t;
 
 /*
+ * Marker set for intersection operations (uses GLib hash table).
+ * Key format: "chrom:pos" string
+ */
+typedef struct {
+    GHashTable* table;
+    int count;
+} marker_set_t;
+
+/*
  * Initialize default parameters.
  */
 void init_sample_params(sample_params_t* params);
@@ -121,9 +136,54 @@ void free_indiv_list(indiv_list_t* list);
 int indiv_in_list(const indiv_list_t* list, const char* id);
 
 /*
- * Run the VCF sampling.
+ * Run the VCF sampling (single-file mode).
  * Returns 0 on success, non-zero on error.
  */
 int run_sample(sample_params_t* params);
+
+/*
+ * Run the VCF sampling (multi-file mode with marker intersection).
+ * Returns 0 on success, non-zero on error.
+ */
+int run_sample_multi(sample_params_t* params);
+
+/*
+ * Collect markers from a VCF file without individual filtering.
+ * Returns marker collection, or NULL on error.
+ */
+marker_collection_t* collect_markers_from_vcf(const char* filename,
+                                              const vcf_region_t* region,
+                                              int verbose);
+
+/*
+ * Create marker set from collection.
+ */
+marker_set_t* markers_to_set(marker_collection_t* mc);
+
+/*
+ * Intersect set with collection, removing markers not in collection.
+ */
+void intersect_with_collection(marker_set_t* set, marker_collection_t* mc);
+
+/*
+ * Check if marker is in set.
+ */
+int marker_in_set(marker_set_t* set, const char* chrom, long pos);
+
+/*
+ * Convert set back to marker collection for selection.
+ */
+marker_collection_t* set_to_collection(marker_set_t* set);
+
+/*
+ * Free marker set.
+ */
+void free_marker_set(marker_set_t* set);
+
+/*
+ * Generate output filename from input file and suffix.
+ * Caller must free the returned string.
+ */
+char* generate_output_filename(const char* input_file, const char* suffix);
 
 #endif /* SAMPLE_H */
