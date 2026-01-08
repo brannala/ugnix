@@ -38,6 +38,7 @@ typedef struct {
     int mother_id;       /* Mother's index (-1 if founder) */
     int is_founder;      /* 1 if founder, 0 otherwise */
     int in_degree;       /* For topological sort: # unprocessed parents */
+    int population_id;   /* Population ID (-1 if not specified) */
 } ped_indiv;
 
 /*
@@ -54,6 +55,8 @@ typedef struct {
     int n_individuals;         /* Current number of individuals */
     int n_founders;            /* Number of founders */
     int capacity;              /* Allocated capacity */
+    int has_populations;       /* 1 if population IDs present, 0 otherwise */
+    int n_populations;         /* Number of distinct populations */
 } pedigree;
 
 /* ============================================================================
@@ -65,8 +68,9 @@ typedef struct {
  * Identifies which founder and which of their two chromosomes
  */
 typedef struct {
-    int founder_id;    /* Index of founder (0-based among founders) */
-    int homolog;       /* 0 = paternal, 1 = maternal chromosome of founder */
+    int founder_id;      /* Index of founder (0-based among founders) */
+    int homolog;         /* 0 = paternal, 1 = maternal chromosome of founder */
+    int population_id;   /* Population ID of founder (-1 if not specified) */
 } founder_origin;
 
 /*
@@ -267,7 +271,8 @@ void print_simulation_header(ped_simulation* sim, FILE* out);
  * Compare two founder origins for equality
  */
 static inline int origin_equal(founder_origin a, founder_origin b) {
-    return (a.founder_id == b.founder_id) && (a.homolog == b.homolog);
+    return (a.founder_id == b.founder_id) && (a.homolog == b.homolog) &&
+           (a.population_id == b.population_id);
 }
 
 /*

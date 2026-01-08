@@ -8,7 +8,7 @@ PROFILE = -g
 
 # build programs
 
-all: hwe-dis kinship gsum het coalsim pedtrans pedsim seqassemble pedsim_seq vcfassemble pedsim_vcf sample
+all: hwe-dis kinship gsum het coalsim pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
 hwe-dis: hwe-dis.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) hwe-dis.o uGnix.o -lglib-2.0 -lm -o hwe-dis
 kinship: kinship.o data.o uGnix.o -lglib-2.0
@@ -47,6 +47,12 @@ pedsim_main.o: pedsim_main.c pedsim.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 pedsim.o: pedsim.c pedsim.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim_multipop: pedsim_multipop_main.o pedsim_multipop.o -lgsl -lgslcblas
+	$(CC) $(PROFILE) pedsim_multipop_main.o pedsim_multipop.o -lm -lgsl -lgslcblas -o pedsim_multipop
+pedsim_multipop_main.o: pedsim_multipop_main.c pedsim_multipop.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim_multipop.o: pedsim_multipop.c pedsim_multipop.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 seqassemble: seqassemble_main.o seqassemble.o
 	$(CC) $(PROFILE) seqassemble_main.o seqassemble.o -o seqassemble
 seqassemble_main.o: seqassemble_main.c seqassemble.h
@@ -71,6 +77,12 @@ pedsim_vcf_main.o: pedsim_vcf_main.c pedsim_vcf.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 pedsim_vcf.o: pedsim_vcf.c pedsim_vcf.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim_vcf_multipop: pedsim_vcf_multipop_main.o pedsim_vcf_multipop.o
+	$(CC) $(PROFILE) pedsim_vcf_multipop_main.o pedsim_vcf_multipop.o -o pedsim_vcf_multipop
+pedsim_vcf_multipop_main.o: pedsim_vcf_multipop_main.c pedsim_vcf_multipop.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+pedsim_vcf_multipop.o: pedsim_vcf_multipop.c pedsim_vcf_multipop.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 sample: sample_main.o sample.o -lgsl -lgslcblas
 	$(CC) $(PROFILE) sample_main.o sample.o -lm -lgsl -lgslcblas -o sample
 sample_main.o: sample_main.c sample.h
@@ -80,8 +92,8 @@ sample.o: sample.c sample.h
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim seqassemble pedsim_seq vcfassemble pedsim_vcf sample
-	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o seqassemble.o seqassemble_main.o pedsim_seq.o pedsim_seq_main.o vcfassemble.o vcfassemble_main.o pedsim_vcf.o pedsim_vcf_main.o sample.o sample_main.o
+	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
+	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o pedsim_multipop.o pedsim_multipop_main.o seqassemble.o seqassemble_main.o pedsim_seq.o pedsim_seq_main.o vcfassemble.o vcfassemble_main.o pedsim_vcf.o pedsim_vcf_main.o pedsim_vcf_multipop.o pedsim_vcf_multipop_main.o sample.o sample_main.o
 tidy:
 	$(RM) *.o
 
@@ -110,7 +122,7 @@ runtests:
 	@eval $$(echo "./test_coalescent" >>runtests)
 	@eval $$(echo "echo \"\nRunning tests on pedtrans.c ...\"" >> runtests)
 	@eval $$(echo "./test_pedtrans" >>runtests)
-	@eval $$(chmod +x runtests) 	
+	@eval $$(chmod +x runtests)
 testsclean:
 	$(RM) test_ugnix
 	$(RM) test_coalescent

@@ -114,6 +114,8 @@ pedigree* create_pedigree(int initial_capacity) {
     ped->n_individuals = 0;
     ped->n_founders = 0;
     ped->capacity = initial_capacity;
+    ped->has_populations = 0;
+    ped->n_populations = 0;
 
     return ped;
 }
@@ -189,6 +191,7 @@ static int get_or_create_id(pedigree* ped, const char* name) {
     ped->individuals[new_id].mother_id = -1;
     ped->individuals[new_id].is_founder = 0;
     ped->individuals[new_id].in_degree = 0;
+    ped->individuals[new_id].population_id = -1;
 
     ped->n_individuals++;
     return new_id;
@@ -228,12 +231,32 @@ int pedigree_add_individual(pedigree* ped, const char* name,
     return id;
 }
 
+/*
+ * Add individual with population ID (extended format)
+ */
+static int pedigree_add_individual_pop(pedigree* ped, const char* name,
+                                       const char* father, const char* mother,
+                                       int population_id) {
+    int id = pedigree_add_individual(ped, name, father, mother);
+    if (id >= 0) {
+        ped->individuals[id].population_id = population_id;
+        if (population_id >= 0) {
+            ped->has_populations = 1;
+            if (population_id >= ped->n_populations) {
+                ped->n_populations = population_id + 1;
+            }
+        }
+    }
+    return id;
+}
+
 pedigree* parse_pedigree(FILE* fp) {
     pedigree* ped = create_pedigree(PED_INITIAL_CAPACITY);
     if (!ped) return NULL;
 
     char line[1024];
     char indiv[PED_MAX_NAME], father[PED_MAX_NAME], mother[PED_MAX_NAME];
+    int pop_id;
 
     while (fgets(line, sizeof(line), fp)) {
         /* Skip empty lines and comments */
@@ -241,15 +264,25 @@ pedigree* parse_pedigree(FILE* fp) {
         while (*p && (*p == ' ' || *p == '\t')) p++;
         if (*p == '\0' || *p == '\n' || *p == '#') continue;
 
-        /* Parse three fields */
-        if (sscanf(line, "%63s %63s %63s", indiv, father, mother) != 3) {
-            fprintf(stderr, "Error: malformed line: %s", line);
-            free_pedigree(ped);
-            return NULL;
-        }
+        /* Try to parse four fields (extended format with population) */
+        int n_fields = sscanf(line, "%63s %63s %63s %d", indiv, father, mother, &pop_id);
 
-        if (pedigree_add_individual(ped, indiv, father, mother) < 0) {
-            fprintf(stderr, "Error: failed to add individual %s\n", indiv);
+        if (n_fields == 4) {
+            /* Extended format with population ID */
+            if (pedigree_add_individual_pop(ped, indiv, father, mother, pop_id) < 0) {
+                fprintf(stderr, "Error: failed to add individual %s\n", indiv);
+                free_pedigree(ped);
+                return NULL;
+            }
+        } else if (n_fields == 3) {
+            /* Standard format without population */
+            if (pedigree_add_individual(ped, indiv, father, mother) < 0) {
+                fprintf(stderr, "Error: failed to add individual %s\n", indiv);
+                free_pedigree(ped);
+                return NULL;
+            }
+        } else {
+            fprintf(stderr, "Error: malformed line: %s", line);
             free_pedigree(ped);
             return NULL;
         }
@@ -421,7 +454,20 @@ ped_chromosome* create_founder_chromosome(int founder_id, int homolog) {
     ped_chromosome* chr = create_chromosome(4);
     if (!chr) return NULL;
 
-    founder_origin origin = {founder_id, homolog};
+    founder_origin origin = {founder_id, homolog, -1};
+    chromosome_add_segment(chr, 0.0, 1.0, origin);
+    return chr;
+}
+
+/*
+ * Create a founder chromosome with population ID
+ */
+static ped_chromosome* create_founder_chromosome_pop(int founder_id, int homolog,
+                                                      int population_id) {
+    ped_chromosome* chr = create_chromosome(4);
+    if (!chr) return NULL;
+
+    founder_origin origin = {founder_id, homolog, population_id};
     chromosome_add_segment(chr, 0.0, 1.0, origin);
     return chr;
 }
@@ -649,8 +695,9 @@ ped_simulation* simulate_pedigree(const char* ped_file, double rec_rate,
 
         if (indiv->is_founder) {
             /* Founder: create unique chromosomes */
-            sim->chromosomes[id].paternal = create_founder_chromosome(founder_idx, 0);
-            sim->chromosomes[id].maternal = create_founder_chromosome(founder_idx, 1);
+            int pop_id = indiv->population_id;
+            sim->chromosomes[id].paternal = create_founder_chromosome_pop(founder_idx, 0, pop_id);
+            sim->chromosomes[id].maternal = create_founder_chromosome_pop(founder_idx, 1, pop_id);
             if (!sim->chromosomes[id].paternal || !sim->chromosomes[id].maternal) {
                 free_simulation(sim);
                 return NULL;
@@ -703,6 +750,7 @@ static void print_chromosome(ped_simulation* sim, ped_chromosome* chr,
     for (int i = 0; i < chr->n_segments; i++) {
         ped_segment* seg = &chr->segments[i];
         int fid = seg->origin.founder_id;
+        int pop_id = seg->origin.population_id;
 
         /* Find founder's name */
         const char* founder_name = NULL;
@@ -722,6 +770,10 @@ static void print_chromosome(ped_simulation* sim, ped_chromosome* chr,
         if (founder_name) {
             fprintf(out, "    %.6f %.6f %s:%s\n",
                     seg->start, seg->end, founder_name, homolog_str);
+        } else if (pop_id >= 0) {
+            /* Multi-population format */
+            fprintf(out, "    %.6f %.6f P%d_F%d:%s\n",
+                    seg->start, seg->end, pop_id, fid, homolog_str);
         } else {
             fprintf(out, "    %.6f %.6f F%d:%s\n",
                     seg->start, seg->end, fid, homolog_str);
@@ -749,6 +801,10 @@ void print_simulation_header(ped_simulation* sim, FILE* out) {
     fprintf(out, "# RecRate: %.6f Seed: %lu\n", sim->rec_rate, sim->seed);
     fprintf(out, "# Individuals: %d Founders: %d\n",
             sim->ped->n_individuals, sim->ped->n_founders);
+
+    if (sim->ped->has_populations) {
+        fprintf(out, "# Populations: %d\n", sim->ped->n_populations);
+    }
 
     /* List founders */
     fprintf(out, "# Founders:");
