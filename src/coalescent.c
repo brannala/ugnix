@@ -7,6 +7,58 @@
 /* Global sample size for bitarray allocation */
 int g_noSamples = 0;
 
+/* Global target regions for sparse simulation.
+ * When set, bitarray operations are skipped for segments outside target regions. */
+static const target_region_set* g_target_regions = NULL;
+
+/* Set target regions for sparse ancestry tracking */
+void set_sparse_target_regions(const target_region_set* trs) {
+    g_target_regions = trs;
+}
+
+/* Check if segment [seg_start, seg_end] overlaps any target region */
+static inline int segment_overlaps_targets(double seg_start, double seg_end) {
+    if (!g_target_regions || !g_target_regions->active) {
+        return 1;  /* No sparse mode - all segments are "targets" */
+    }
+
+    /* Quick rejection using cached bounds */
+    if (seg_end <= g_target_regions->min_start ||
+        seg_start >= g_target_regions->max_end) {
+        return 0;
+    }
+
+    /* Check each target region */
+    for (int i = 0; i < g_target_regions->n_regions; i++) {
+        if (seg_start < g_target_regions->regions[i].end &&
+            seg_end > g_target_regions->regions[i].start) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Check if chromosome has ANY segment overlapping target regions.
+ * If not, the chromosome can be pruned from the simulation. */
+int chromosome_overlaps_targets(const chromosome* chr) {
+    if (!g_target_regions || !g_target_regions->active) {
+        return 1;  /* No sparse mode - keep all chromosomes */
+    }
+
+    double prev_pos = 0.0;
+    ancestry* anc = chr->anc;
+
+    while (anc != NULL) {
+        if (segment_overlaps_targets(prev_pos, anc->position)) {
+            return 1;  /* Has target-overlapping segment */
+        }
+        prev_pos = anc->position;
+        anc = anc->next;
+    }
+
+    return 0;  /* No segments overlap targets - can be pruned */
+}
+
 struct geneTree* SortedMerge(struct geneTree* a, struct geneTree* b) 
 { 
 	struct geneTree* result = NULL; 
@@ -77,6 +129,18 @@ chromosome* getChrPtr(int chr, chrsample* chrom)
 
 bitarray* unionAnc(const bitarray *anc1, const bitarray *anc2)
 {
+  /* Handle NULL inputs from sparse simulation */
+  if (!anc1 && !anc2) {
+    return NULL;  /* Both NULL - no ancestry to track */
+  }
+  if (!anc1) {
+    return bitarray_copy(anc2);  /* Only anc2 has ancestry */
+  }
+  if (!anc2) {
+    return bitarray_copy(anc1);  /* Only anc1 has ancestry */
+  }
+
+  /* Both have ancestry - compute union */
   bitarray *result = bitarray_create(g_noSamples);
   bitarray_union_into(result, anc1, anc2);
   return result;
@@ -93,6 +157,8 @@ chromosome* copy_chrom(chromosome* sourceChr)
   newChr->anc = malloc(sizeof(ancestry));
   int firstAnc=1;
   currNew = newChr->anc;
+  double prev_position = 0.0;  /* Track segment start for sparse check */
+
   while(currOld != NULL)
     {
       if(!firstAnc)
@@ -102,9 +168,16 @@ chromosome* copy_chrom(chromosome* sourceChr)
 	}
       firstAnc = 0;
       currNew->position = currOld->position;
-      currNew->abits = bitarray_copy(currOld->abits);
-      currOld = currOld->next;
 
+      /* Sparse optimization: skip bitarray copy for non-target segments */
+      if (segment_overlaps_targets(prev_position, currOld->position)) {
+        currNew->abits = bitarray_copy(currOld->abits);
+      } else {
+        currNew->abits = NULL;
+      }
+
+      prev_position = currOld->position;
+      currOld = currOld->next;
     }
   currNew->next = NULL;
   return newChr;
@@ -348,9 +421,10 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       currAnc = currAnc->next;
     }
 
-  /* Count how many chromosomes we're adding */
+  /* Count how many chromosomes we're adding.
+   * Sparse optimization: also prune chromosomes with no target-overlapping segments. */
   int added = 0;
-  if (hasAncLeft)
+  if (hasAncLeft && chromosome_overlaps_targets(newLeft))
     {
       newLeft->ancLen = calcChromAncLength(newLeft);  /* cache for binary search */
       appendChrom(chrom, newLeft);
@@ -358,12 +432,12 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
     }
   else
     {
-      /* Free unused chromosome */
+      /* Free unused chromosome (no ancestry or no target overlap) */
       delete_anc(newLeft->anc);
       free(newLeft);
     }
 
-  if (hasAncRight)
+  if (hasAncRight && chromosome_overlaps_targets(newRight))
     {
       newRight->ancLen = calcChromAncLength(newRight);  /* cache for binary search */
       appendChrom(chrom, newRight);
@@ -371,7 +445,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
     }
   else
     {
-      /* Free unused chromosome */
+      /* Free unused chromosome (no ancestry or no target overlap) */
       delete_anc(newRight->anc);
       free(newRight);
     }
@@ -385,47 +459,77 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
   double epsilon = 1e-10;
   chromosome* commonAnc = malloc(sizeof(chromosome));
   commonAnc->anc = malloc(sizeof(ancestry));
-  commonAnc->anc->abits = bitarray_create(g_noSamples);
+  commonAnc->anc->abits = NULL;  /* Will be set below */
   commonAnc->anc->position=0;
   commonAnc->anc->next = NULL;
   ancestry* tmp = commonAnc->anc;
   ancestry* anc1 = ptrchr1->anc;
   ancestry* anc2 = ptrchr2->anc;
+  double prev_position = 0.0;  /* Track segment start for sparse check */
 
   while((anc1 != NULL)&&(anc2 != NULL))
     {
-      bitarray_free(tmp->abits);
-      tmp->abits = unionAnc(anc1->abits,anc2->abits);
+      /* Determine segment end position */
+      double seg_end;
       if((anc1->position - anc2->position) > epsilon)
 	{
-	  tmp->position = anc2->position;
-	  anc2 = anc2->next;
+	  seg_end = anc2->position;
+	}
+      else if((anc2->position - anc1->position) > epsilon)
+	{
+	  seg_end = anc1->position;
 	}
       else
 	{
-	  if((anc2->position - anc1->position) > epsilon)
-	    {
-	      tmp->position = anc1->position;
-	      anc1 = anc1->next;
-	    }
-	  else
-	    {
-	      tmp->position = anc1->position;
-	      anc2 = anc2->next;
-	      anc1 = anc1->next;
-	    }
+	  seg_end = anc1->position;
 	}
-       if((anc1 != NULL)&&(anc2 != NULL))
+
+      /* Sparse optimization: only compute ancestry for target-overlapping segments */
+      if (tmp->abits) bitarray_free(tmp->abits);
+      if (segment_overlaps_targets(prev_position, seg_end)) {
+        /* Segment overlaps target - compute full ancestry */
+        tmp->abits = unionAnc(anc1->abits, anc2->abits);
+      } else {
+        /* Segment outside targets - skip bitarray computation */
+        tmp->abits = NULL;
+      }
+      tmp->position = seg_end;
+
+      /* Advance input pointers */
+      if((anc1->position - anc2->position) > epsilon)
+	{
+	  anc2 = anc2->next;
+	}
+      else if((anc2->position - anc1->position) > epsilon)
+	{
+	  anc1 = anc1->next;
+	}
+      else
+	{
+	  anc2 = anc2->next;
+	  anc1 = anc1->next;
+	}
+
+      prev_position = seg_end;
+
+      if((anc1 != NULL)&&(anc2 != NULL))
 	 {
 	   tmp->next = malloc(sizeof(ancestry));
 	   tmp->next->next = NULL;
-	   tmp->next->abits = bitarray_create(g_noSamples);
+	   tmp->next->abits = NULL;
 	   tmp->next->position=0;
 	   tmp = tmp->next;
 	 }
     }
   return(commonAnc);
 } 
+
+/* Helper to compare ancestry bitarrays, handling NULL from sparse simulation */
+static inline int ancestry_abits_equal(const bitarray* a, const bitarray* b) {
+    if (a == NULL && b == NULL) return 1;  /* Both outside targets */
+    if (a == NULL || b == NULL) return 0;  /* One inside, one outside */
+    return bitarray_equal(a, b);
+}
 
 void combineIdentAdjAncSegs(chromosome *ptrchr)
 {
@@ -434,7 +538,7 @@ void combineIdentAdjAncSegs(chromosome *ptrchr)
   tmp = ptrchr->anc;
   while(tmp->next != NULL)
     {
-      if(bitarray_equal(tmp->abits, tmp->next->abits))
+      if(ancestry_abits_equal(tmp->abits, tmp->next->abits))
 	{
 	  tmp_del = tmp->next;
 	  tmp->position = tmp->next->position;
@@ -500,8 +604,16 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
     delete_chrom_idx(idx1, chrom);
   }
 
-  /* Append merged chromosome */
-  appendChrom(chrom, commonAnc);
+  /* Sparse optimization: prune chromosome if it has no target-overlapping segments */
+  if (chromosome_overlaps_targets(commonAnc)) {
+    /* Append merged chromosome */
+    appendChrom(chrom, commonAnc);
+  } else {
+    /* Chromosome has no target-overlapping segments - prune it */
+    delete_anc(commonAnc->anc);
+    free(commonAnc);
+    (*noChrom)--;  /* One fewer chromosome */
+  }
 }
 
 void updateCoalescentEvents(struct coalescent_events** coalescent_list,
@@ -1498,6 +1610,34 @@ void free_target_regions(target_region_set* trs)
     if (!trs) return;
     free(trs->regions);
     free(trs);
+}
+
+/*
+ * Check if a position (in 0-1 scale) falls within any target region.
+ * Used to filter mutations to only target regions in sparse simulation.
+ * Returns 1 if position is in a target region, 0 otherwise.
+ * If regions is NULL or not active, returns 1 (accept all positions).
+ */
+int position_in_target_regions(double pos, const target_region_set* trs)
+{
+    /* If no target regions, accept all positions */
+    if (!trs || !trs->active || trs->n_regions == 0) {
+        return 1;
+    }
+
+    /* Quick rejection using cached bounds */
+    if (pos < trs->min_start || pos > trs->max_end) {
+        return 0;
+    }
+
+    /* Check each region */
+    for (int i = 0; i < trs->n_regions; i++) {
+        if (pos >= trs->regions[i].start && pos <= trs->regions[i].end) {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 /*

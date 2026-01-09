@@ -366,6 +366,9 @@ int main(int argc, char **argv)
         }
       }
     }
+
+    /* Enable sparse ancestry tracking - skip bitarray ops outside targets */
+    set_sparse_target_regions(target_regions);
   }
 
   char* baseUnit = malloc(sizeof(char)*5);
@@ -389,7 +392,10 @@ int main(int argc, char **argv)
   /* Initialize ancLength cache (create_sample sets it to noChrom) */
   ancLength = getAncLength(chromSample);
 
-  while((noChrom > 1) && (!TestMRCAForTargetRegions(chromSample, mrca, target_regions)) )
+  /* MRCA check flag - only check after coalescence events (not rec/mut) */
+  int mrca_reached = 0;
+
+  while((noChrom > 1) && !mrca_reached)
   {
     double prob = 0;
     eventNo++;
@@ -420,6 +426,8 @@ int main(int argc, char **argv)
       	if(calc_mrca || prn_genetrees)
 	  getMRCAs(&head,chromSample,totalTime,mrca);
 	noCoal++;
+	/* Check MRCA only after coalescence (when it can actually change) */
+	mrca_reached = TestMRCAForTargetRegions(chromSample, mrca, target_regions);
       } 
     else
       if(prob <= (coalProb + recProb))
@@ -439,18 +447,25 @@ int main(int argc, char **argv)
 	  eventLocation = ancLength*gsl_rng_uniform_pos(r);
 	  assert(eventLocation <= ancLength);
 	  getMutEvent(chromSample, eventLocation, tmpMut, totalTime);
-	  /* O(1) append using tail pointer */
-	  if(mutation_list == NULL)
-	    {
-	      mutation_list = tmpMut;
-	      mutation_list_tail = tmpMut;
-	    }
-	  else
-	    {
-	      mutation_list_tail->next = tmpMut;
-	      mutation_list_tail = tmpMut;
-	    }
-	  noMutations++;
+	  /* Filter mutations to target regions if sparse simulation enabled */
+	  if (!position_in_target_regions(tmpMut->location, target_regions)) {
+	    /* Mutation outside target regions - discard it */
+	    if (tmpMut->abits) bitarray_free(tmpMut->abits);
+	    free(tmpMut);
+	  } else {
+	    /* O(1) append using tail pointer */
+	    if(mutation_list == NULL)
+	      {
+	        mutation_list = tmpMut;
+	        mutation_list_tail = tmpMut;
+	      }
+	    else
+	      {
+	        mutation_list_tail->next = tmpMut;
+	        mutation_list_tail = tmpMut;
+	      }
+	    noMutations++;
+	  }
 	}
   }
 
@@ -614,6 +629,16 @@ int main(int argc, char **argv)
   /* Clean up target regions */
   if (target_regions) {
     free_target_regions(target_regions);
+  }
+
+  /* Report bitarray pool statistics */
+  if (opt_verbose) {
+    int pool_size, total_allocs, pool_hits;
+    bitarray_pool_stats(&pool_size, &total_allocs, &pool_hits);
+    fprintf(stderr, "Bitarray pool: %d allocs, %d hits (%.1f%% hit rate), %d in pool\n",
+            total_allocs, pool_hits,
+            total_allocs > 0 ? 100.0 * pool_hits / total_allocs : 0.0,
+            pool_size);
   }
 
   /* Clean up bitarray memory pool */

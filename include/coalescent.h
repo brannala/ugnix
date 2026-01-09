@@ -224,12 +224,27 @@ target_region_set* load_target_regions(const char* filename);
 /* Free target region set */
 void free_target_regions(target_region_set* regions);
 
+/* Check if a position (0-1 scale) falls within any target region.
+ * Returns 1 if in a target region, 0 otherwise.
+ * If regions is NULL or not active, returns 1 (accept all positions).
+ */
+int position_in_target_regions(double pos, const target_region_set* regions);
+
 /* Test if all target regions have reached MRCA.
  * Returns 1 if all target regions have MRCA, 0 otherwise.
  * If regions is NULL or not active, falls back to TestMRCAForAll behavior.
  */
 int TestMRCAForTargetRegions(chrsample* chrom, const bitarray* mrca,
                              const target_region_set* regions);
+
+/* Enable sparse ancestry tracking for target regions.
+ * When set, bitarray operations are skipped for segments outside target regions.
+ * This dramatically reduces computation for sparse simulations. */
+void set_sparse_target_regions(const target_region_set* trs);
+
+/* Check if chromosome has any segment overlapping target regions.
+ * Used to prune chromosomes that can't contribute to target genealogy. */
+int chromosome_overlaps_targets(const chromosome* chr);
 
 /* Deprecated: use bitarray functions instead */
 void getBits(unsigned int value, unsigned int noSamples, unsigned int* result);
