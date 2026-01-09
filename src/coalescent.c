@@ -169,11 +169,17 @@ chromosome* copy_chrom(chromosome* sourceChr)
       firstAnc = 0;
       currNew->position = currOld->position;
 
-      /* Sparse optimization: skip bitarray copy for non-target segments */
+      /* Sparse optimization: skip bitarray copy for non-target segments.
+       * But preserve zero bitarrays (non-ancestral) - don't convert to NULL
+       * since NULL means "ancestral but not tracked". */
       if (segment_overlaps_targets(prev_position, currOld->position)) {
         currNew->abits = bitarray_copy(currOld->abits);
-      } else {
+      } else if (currOld->abits == NULL || !bitarray_is_zero(currOld->abits)) {
+        /* Ancestral segment outside targets - use NULL optimization */
         currNew->abits = NULL;
+      } else {
+        /* Non-ancestral segment (zero bitarray) - keep as zero */
+        currNew->abits = bitarray_create(g_noSamples);
       }
 
       prev_position = currOld->position;
@@ -228,7 +234,8 @@ void appendChrom(chrsample* chrom, chromosome* chr)
   chrom->chrs[chrom->count++] = chr;
 }
 
-/* Calculate total ancestral length and update cache */
+/* Calculate total ancestral length and update cache.
+ * In sparse mode, NULL abits means "ancestral but not tracked" - count it. */
 double calcAncLength(chrsample* chrom)
 {
   ancestry* tmp_anc;
@@ -240,7 +247,7 @@ double calcAncLength(chrsample* chrom)
       lastPosition = 0;
       while(tmp_anc != NULL)
 	{
-	  if(tmp_anc->abits && !bitarray_is_zero(tmp_anc->abits))
+	  if(tmp_anc->abits == NULL || !bitarray_is_zero(tmp_anc->abits))
 	      totLength += tmp_anc->position - lastPosition;
 	  lastPosition = tmp_anc->position;
 	  tmp_anc = tmp_anc->next;
@@ -256,14 +263,17 @@ double getAncLength(const chrsample* chrom)
   return chrom->ancLength;
 }
 
-/* Calculate ancestral length for a single chromosome */
+/* Calculate ancestral length for a single chromosome.
+ * In sparse mode, NULL abits means "ancestral but not tracked in detail"
+ * so those segments should contribute to length for correct rate calculations.
+ * Only segments with explicit zero bitarray are non-ancestral. */
 double calcChromAncLength(const chromosome* chr)
 {
   double length = 0;
   double lastPos = 0;
   ancestry* tmp = chr->anc;
   while (tmp != NULL) {
-    if (tmp->abits && !bitarray_is_zero(tmp->abits))
+    if (tmp->abits == NULL || !bitarray_is_zero(tmp->abits))
       length += tmp->position - lastPos;
     lastPos = tmp->position;
     tmp = tmp->next;
@@ -310,7 +320,8 @@ void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
   /* lo is the target chromosome index */
   double cumLen = cumSum[lo];
 
-  /* Linear scan within the target chromosome to find exact position */
+  /* Linear scan within the target chromosome to find exact position.
+   * In sparse mode, NULL abits means "ancestral but not tracked" - count it. */
   ancestry* tmp_anc = chrom->chrs[lo]->anc;
   double lastPosition = 0;
   double currLength = cumLen;
@@ -318,7 +329,7 @@ void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 
   while (tmp_anc != NULL)
     {
-      if (tmp_anc->abits && !bitarray_is_zero(tmp_anc->abits))
+      if (tmp_anc->abits == NULL || !bitarray_is_zero(tmp_anc->abits))
         currLength += tmp_anc->position - lastPosition;
       else
         nonAncestralLength += tmp_anc->position - lastPosition;
@@ -398,12 +409,13 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   /* Check for non-empty ancestry before adding each chromosome.
      Due to floating point precision in getRecEvent, recombination location
      can occasionally land at segment boundaries, creating chromosomes
-     with no ancestral material. Only add chromosomes with ancestry. */
+     with no ancestral material. Only add chromosomes with ancestry.
+     In sparse mode, NULL abits means "ancestral but not tracked" - treat as having ancestry. */
   currAnc = newLeft->anc;
   int hasAncLeft = 0;
   while (currAnc != NULL)
     {
-      if (currAnc->abits && !bitarray_is_zero(currAnc->abits)) {
+      if (currAnc->abits == NULL || !bitarray_is_zero(currAnc->abits)) {
         hasAncLeft = 1;
         break;
       }
@@ -414,7 +426,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   int hasAncRight = 0;
   while (currAnc != NULL)
     {
-      if (currAnc->abits && !bitarray_is_zero(currAnc->abits)) {
+      if (currAnc->abits == NULL || !bitarray_is_zero(currAnc->abits)) {
         hasAncRight = 1;
         break;
       }
@@ -484,14 +496,24 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 	  seg_end = anc1->position;
 	}
 
-      /* Sparse optimization: only compute ancestry for target-overlapping segments */
+      /* Sparse optimization: only compute ancestry for target-overlapping segments.
+       * But preserve non-ancestral status (both inputs zero) - don't use NULL
+       * since NULL means "ancestral but not tracked". */
       if (tmp->abits) bitarray_free(tmp->abits);
       if (segment_overlaps_targets(prev_position, seg_end)) {
         /* Segment overlaps target - compute full ancestry */
         tmp->abits = unionAnc(anc1->abits, anc2->abits);
       } else {
-        /* Segment outside targets - skip bitarray computation */
-        tmp->abits = NULL;
+        /* Segment outside targets - check if result would be ancestral */
+        int anc1_is_anc = (anc1->abits == NULL || !bitarray_is_zero(anc1->abits));
+        int anc2_is_anc = (anc2->abits == NULL || !bitarray_is_zero(anc2->abits));
+        if (anc1_is_anc || anc2_is_anc) {
+          /* At least one input is ancestral - result is ancestral */
+          tmp->abits = NULL;
+        } else {
+          /* Both inputs non-ancestral - result is non-ancestral */
+          tmp->abits = bitarray_create(g_noSamples);
+        }
       }
       tmp->position = seg_end;
 
@@ -1196,7 +1218,7 @@ void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time
 
   while (tmp_anc != NULL)
     {
-      if (tmp_anc->abits && !bitarray_is_zero(tmp_anc->abits))
+      if (tmp_anc->abits == NULL || !bitarray_is_zero(tmp_anc->abits))
         currLength += tmp_anc->position - lastPosition;
       else
         nonAncestralLength += tmp_anc->position - lastPosition;
