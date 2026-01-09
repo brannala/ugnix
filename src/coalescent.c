@@ -1666,9 +1666,11 @@ int position_in_target_regions(double pos, const target_region_set* trs)
  * Test if all target regions have reached MRCA.
  *
  * Optimizations:
- * 1. Use cached min_start/max_end for quick segment rejection
- * 2. Early exit when segment starts past all targets (segments are sorted)
- * 3. Inline overlap check for single target region (common case)
+ * 1. Single chromosome = MRCA (no need to check segments)
+ * 2. Use cached min_start/max_end for quick segment rejection
+ * 3. Early exit when segment starts past all targets (segments are sorted)
+ * 4. Inline overlap check for single target region (common case)
+ * 5. NULL abits check before bitarray_is_zero (faster)
  */
 int TestMRCAForTargetRegions(chrsample* chrom, const bitarray* mrca,
                              const target_region_set* trs)
@@ -1676,6 +1678,11 @@ int TestMRCAForTargetRegions(chrsample* chrom, const bitarray* mrca,
     /* If no target regions or not active, fall back to full check */
     if (!trs || !trs->active || trs->n_regions == 0) {
         return TestMRCAForAll(chrom, mrca);
+    }
+
+    /* Single chromosome means MRCA reached for all regions */
+    if (chrom->count == 1) {
+        return 1;
     }
 
     const double min_start = trs->min_start;
@@ -1718,8 +1725,11 @@ int TestMRCAForTargetRegions(chrsample* chrom, const bitarray* mrca,
             }
 
             if (overlaps) {
-                /* Check if this segment has reached MRCA */
-                if (!bitarray_is_zero(tmp_anc->abits) &&
+                /* Check if this segment has reached MRCA.
+                 * NULL abits in target region shouldn't happen in sparse mode,
+                 * but check first as it's faster than bitarray_is_zero. */
+                if (tmp_anc->abits != NULL &&
+                    !bitarray_is_zero(tmp_anc->abits) &&
                     !bitarray_equal(tmp_anc->abits, mrca)) {
                     return 0;  /* Not MRCA yet for this target region */
                 }
