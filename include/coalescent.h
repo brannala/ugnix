@@ -38,7 +38,9 @@ typedef struct ancestry ancestry;
 struct chromosome
 {
   ancestry* anc;
-  double ancLen;  /* cached ancestral length for O(log n) event lookup */
+  double ancLen;      /* cached total ancestral length for O(log n) event lookup */
+  double activeLen;   /* cached active length (excluding MRCA segments) */
+  int activeLenValid; /* 1 if activeLen is valid, 0 if needs recalc */
 };
 typedef struct chromosome chromosome;
 
@@ -150,7 +152,8 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2);
 
 void combineIdentAdjAncSegs(chromosome *ptrchr);
 
-void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom);
+void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom,
+                 const bitarray* mrca);
 
 void updateCoalescentEvents(struct coalescent_events** coalescent_list,
 			    struct coalescent_events** coalescent_list_tail,

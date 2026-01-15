@@ -526,7 +526,7 @@ int main(int argc, char **argv)
       {
 	coalescent_pair pair;
 	getCoalPair(r,noChrom,&pair);
-	coalescence(pair,&noChrom, chromSample);
+	coalescence(pair,&noChrom, chromSample, mrca);
 	if(prn_genetrees)
 	    updateCoalescentEvents(&coalescent_list, &coalescent_list_tail, chromSample, totalTime);
       	if(calc_mrca || prn_genetrees)

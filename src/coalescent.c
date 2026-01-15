@@ -153,6 +153,8 @@ chromosome* copy_chrom(chromosome* sourceChr)
   ancestry* currOld;
   newChr = malloc(sizeof(chromosome));
   newChr->ancLen = sourceChr->ancLen;  /* copy cached ancestral length */
+  newChr->activeLen = sourceChr->activeLen;
+  newChr->activeLenValid = sourceChr->activeLenValid;
   currOld = sourceChr->anc;
   newChr->anc = calloc(1, sizeof(ancestry));
   int firstAnc=1;
@@ -401,6 +403,14 @@ void invalidateActiveAncLength(chrsample* chrom)
   chrom->activeAncValid = 0;
 }
 
+/* Update total active ancestral length after coalescence.
+ * Recalculates to ensure is_mrca gets set on all segments. */
+void updateActiveAncLengthCoal(chrsample* chrom, const bitarray* mrca)
+{
+  chrom->activeAncLength = calcActiveAncLength(chrom, mrca);
+  chrom->activeAncValid = 1;
+}
+
 /*
 eventPos is the absolute position of rec event on cumulative ancestral
 chromosome material (ancLength) -> getRecEvent finds the recombinant chromosome
@@ -424,14 +434,21 @@ void getRecEventActive(chrsample* chrom, double eventPos, recombination_event* r
 {
   int n = chrom->count;
 
-  /* Build cumulative sum array using active ancestry only */
+  /* Build cumulative sum array using cached per-chromosome active lengths.
+   * This is O(n) instead of O(n * segments). */
   double* cumSum = alloca((n + 1) * sizeof(double));
   cumSum[0] = 0;
   for (int i = 0; i < n; i++) {
-    if (mrca)
-      cumSum[i + 1] = cumSum[i] + calcChromAncLengthActive(chrom->chrs[i], mrca);
-    else
+    if (mrca) {
+      chromosome* chr = chrom->chrs[i];
+      if (!chr->activeLenValid) {
+        chr->activeLen = calcChromAncLengthActive(chr, mrca);
+        chr->activeLenValid = 1;
+      }
+      cumSum[i + 1] = cumSum[i] + chr->activeLen;
+    } else {
       cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+    }
   }
 
   /* Binary search: find largest i where cumSum[i] <= eventPos */
@@ -572,6 +589,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   if (hasAncLeft && chromosome_overlaps_targets(newLeft))
     {
       newLeft->ancLen = calcChromAncLength(newLeft);  /* cache for binary search */
+      newLeft->activeLenValid = 0;  /* will be calculated on first use */
       newAncLen += newLeft->ancLen;
       appendChrom(chrom, newLeft);
       added++;
@@ -586,6 +604,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   if (hasAncRight && chromosome_overlaps_targets(newRight))
     {
       newRight->ancLen = calcChromAncLength(newRight);  /* cache for binary search */
+      newRight->activeLenValid = 0;  /* will be calculated on first use */
       newAncLen += newRight->ancLen;
       appendChrom(chrom, newRight);
       added++;
@@ -728,7 +747,8 @@ void getCoalPair(gsl_rng * r, unsigned int noChrom, coalescent_pair* pair)
     }
 }
 
-void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
+void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom,
+                 const bitarray* mrca)
 {
   *noChrom = *noChrom - 1;
   chromosome* ptrchr1 = getChrPtr(pair.chr1, chrom);
@@ -763,6 +783,9 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
 
   /* Sparse optimization: prune chromosome if it has no target-overlapping segments */
   if (chromosome_overlaps_targets(commonAnc)) {
+    /* Calculate and cache active length of merged chromosome */
+    commonAnc->activeLen = calcChromAncLengthActive(commonAnc, mrca);
+    commonAnc->activeLenValid = 1;
     /* Append merged chromosome */
     appendChrom(chrom, commonAnc);
   } else {
@@ -772,8 +795,8 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
     (*noChrom)--;  /* One fewer chromosome */
   }
 
-  /* Invalidate active length cache - coalescence changes MRCA status */
-  invalidateActiveAncLength(chrom);
+  /* Recalculate total active length (triggers is_mrca caching on all segments) */
+  updateActiveAncLengthCoal(chrom, mrca);
 }
 
 void updateCoalescentEvents(struct coalescent_events** coalescent_list,
@@ -1089,6 +1112,7 @@ chrsample* create_sample(int noChrom)
       newChrom->anc->abits = bitarray_singleton(g_noSamples, i);
       newChrom->anc->position = 1.0;
       newChrom->ancLen = 1.0;  /* initial: full chromosome is ancestral */
+      newChrom->activeLenValid = 0;  /* will be calculated on first use */
       chromSample->chrs[chromSample->count++] = newChrom;
     }
   return chromSample;
@@ -1341,14 +1365,21 @@ void getMutEventActive(chrsample* chrom, double eventPos, mutation* mutEv, doubl
 {
   int n = chrom->count;
 
-  /* Build cumulative sum array using active ancestry only */
+  /* Build cumulative sum array using cached per-chromosome active lengths.
+   * This is O(n) instead of O(n * segments). */
   double* cumSum = alloca((n + 1) * sizeof(double));
   cumSum[0] = 0;
   for (int i = 0; i < n; i++) {
-    if (mrca)
-      cumSum[i + 1] = cumSum[i] + calcChromAncLengthActive(chrom->chrs[i], mrca);
-    else
+    if (mrca) {
+      chromosome* chr = chrom->chrs[i];
+      if (!chr->activeLenValid) {
+        chr->activeLen = calcChromAncLengthActive(chr, mrca);
+        chr->activeLenValid = 1;
+      }
+      cumSum[i + 1] = cumSum[i] + chr->activeLen;
+    } else {
       cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+    }
   }
 
   /* Binary search: find largest i where cumSum[i] <= eventPos */
