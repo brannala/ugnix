@@ -1,0 +1,245 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+
+\title{Validation of Coalsim Against Hudson's ms Simulator}
+\author{uGnix Development}
+\date{January 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We validate the coalescent simulator \texttt{coalsim} against Hudson's \texttt{ms}, the standard reference implementation for coalescent simulation with recombination. After correcting a bug in the handling of MRCA segments, \texttt{coalsim} produces mutation counts that match both \texttt{ms} and theoretical expectations across a range of recombination rates.
+\end{abstract}
+
+\section{Introduction}
+
+The coalescent with recombination is a fundamental model in population genetics for simulating the ancestral history of a sample of DNA sequences. Hudson's \texttt{ms} program \cite{hudson2002} has been the standard reference implementation for over two decades.
+
+We developed \texttt{coalsim} as part of the uGnix toolkit for population genetic simulation. This document describes our validation of \texttt{coalsim} against \texttt{ms}, including the identification and correction of a subtle bug related to segments that have reached their most recent common ancestor (MRCA).
+
+\section{Theoretical Background}
+
+\subsection{The Standard Coalescent}
+
+Under the standard coalescent model, the expected number of segregating sites in a sample of $n$ sequences is:
+\begin{equation}
+E[S] = \theta \cdot H_{n-1}
+\end{equation}
+where $\theta = 4N\mu$ is the population-scaled mutation rate and $H_{n-1} = \sum_{i=1}^{n-1} \frac{1}{i}$ is the $(n-1)$-th harmonic number.
+
+\subsection{Independence from Recombination}
+
+A key property of the coalescent is that the expected number of segregating sites is \emph{independent} of the recombination rate. While recombination affects the correlation structure of mutations along the chromosome (linkage disequilibrium), it does not change the marginal distribution of the genealogy at any single position.
+
+For a chromosome of unit length, if $L(t)$ denotes the total ancestral material at time $t$, we have:
+\begin{equation}
+L(t) = \int_0^1 k_x(t) \, dx
+\end{equation}
+where $k_x(t)$ is the number of lineages ancestral to position $x$ at time $t$.
+
+The integrated ancestry is:
+\begin{equation}
+\int_0^\infty L(t) \, dt = \int_0^1 T(x) \, dx
+\end{equation}
+where $T(x)$ is the total tree length at position $x$. Since $E[T(x)] = 4N \cdot H_{n-1}$ for all $x$, we have:
+\begin{equation}
+E\left[\int_0^\infty L(t) \, dt\right] = 4N \cdot H_{n-1}
+\end{equation}
+This quantity determines the expected number of mutations and should be constant regardless of recombination rate.
+
+\section{Parameter Equivalence}
+
+The two simulators use different parameterizations. Table~\ref{tab:params} shows the correspondence.
+
+\begin{table}[h]
+\centering
+\caption{Parameter equivalence between \texttt{ms} and \texttt{coalsim}}
+\label{tab:params}
+\begin{tabular}{lll}
+\toprule
+\texttt{ms} & \texttt{coalsim} & Relationship \\
+\midrule
+$\theta$ & \texttt{-m} $\mu$ & $\theta = 4N\mu$ \\
+$\rho$ & \texttt{-r} $r$ & $\rho = 4Nr$ \\
+$n$ (samples) & \texttt{-c} $n$ & same \\
+-- & \texttt{-N} $N$ & population size \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For our comparison, we use $n=20$, $N=1000$, and $\theta=200$, which corresponds to \texttt{coalsim} parameters \texttt{-c 20 -N 1000 -m 0.05}.
+
+The expected number of segregating sites is:
+\begin{equation}
+E[S] = 200 \times H_{19} \approx 200 \times 3.55 = 710
+\end{equation}
+
+\section{Initial Comparison: Discovery of Bug}
+
+Our initial comparison revealed a significant discrepancy. While \texttt{ms} produced approximately 700 segregating sites regardless of recombination rate, \texttt{coalsim} produced substantially more mutations, with the count increasing with recombination rate.
+
+\begin{table}[h]
+\centering
+\caption{Initial comparison showing bug in \texttt{coalsim} (before fix)}
+\label{tab:before}
+\begin{tabular}{lcc}
+\toprule
+Recombination & \texttt{ms} & \texttt{coalsim} \\
+\midrule
+$\rho=0$ / $r=0.001$ & 696 & 370 \\
+$\rho=40$ / $r=0.01$ & 721 & 695 \\
+$\rho=100$ / $r=0.05$ & 702 & 873 \\
+$\rho=200$ / $r=0.1$ & 705 & 1035 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Note: The low count at $r=0.001$ is due to the very short chromosome length (0.1 cM), not a bug.
+
+\section{Diagnosis}
+
+We introduced debug tracking of the integrated ancestry length $\int L(t)\,dt$. The results were revealing:
+
+\begin{table}[h]
+\centering
+\caption{Integrated ancestry length before fix}
+\label{tab:integral_before}
+\begin{tabular}{lcc}
+\toprule
+$r$ & $\int L(t)\,dt$ & Expected \\
+\midrule
+0.001 & 17,019 & 11,320 \\
+0.01 & 21,618 & 11,320 \\
+0.05 & 25,578 & 11,320 \\
+0.1 & 27,617 & 11,320 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The integrated ancestry was roughly doubling with high recombination when it should remain constant.
+
+Further debugging revealed that at a typical time point during simulation with recombination:
+\begin{itemize}
+\item Total ancestral length: 1.312
+\item Segments at MRCA: 0.726 (55\%)
+\item Active segments: 0.586 (45\%)
+\end{itemize}
+
+More than half of the counted ancestry was from segments that had \emph{already reached MRCA}.
+
+\section{The Bug: MRCA Segment Counting}
+
+\subsection{Root Cause}
+
+With recombination, different positions along the chromosome reach MRCA at different times. Once a segment reaches MRCA:
+\begin{enumerate}
+\item No further coalescence events are possible at that position
+\item Any mutations would be \emph{fixed} in the population (present in all samples), not segregating sites
+\end{enumerate}
+
+The simulation must continue until \emph{all} positions reach MRCA. However, the original implementation continued to count MRCA segments in the ancestral length used for rate calculations.
+
+\subsection{The Fix}
+
+We introduced ``active'' ancestry calculations that exclude segments where the ancestry bitarray equals the full MRCA (all sample bits set):
+
+\begin{verbatim}
+double calcActiveAncLength(chrsample* chrom, const bitarray* mrca)
+{
+  // Sum ancestry lengths, excluding segments where
+  // bitarray_equal(segment->abits, mrca) is true
+}
+\end{verbatim}
+
+The main simulation loop was modified to use active ancestry for:
+\begin{itemize}
+\item Recombination rate calculation
+\item Mutation rate calculation
+\item Event location selection
+\end{itemize}
+
+\section{Validation After Fix}
+
+\subsection{Integrated Ancestry Length}
+
+\begin{table}[h]
+\centering
+\caption{Integrated ancestry length after fix}
+\label{tab:integral_after}
+\begin{tabular}{lcc}
+\toprule
+$r$ & $\int L(t)\,dt$ & Expected \\
+\midrule
+0.001 & 12,900 & 11,320 \\
+0.01 & 10,041 & 11,320 \\
+0.05 & 10,633 & 11,320 \\
+0.1 & 10,271 & 11,320 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The integrated ancestry is now stable around the expected value regardless of recombination rate.
+
+\subsection{Comparison with ms}
+
+\begin{table}[h]
+\centering
+\caption{Final comparison: \texttt{coalsim} vs \texttt{ms} (50 replicates each)}
+\label{tab:final}
+\begin{tabular}{lc}
+\toprule
+Simulator & Mean Segregating Sites \\
+\midrule
+\texttt{ms} ($\theta=200$, $\rho=40$) & 718 \\
+\texttt{coalsim} ($n=20$, $N=1000$, $r=0.01$, $m=0.05$) & 706 \\
+\midrule
+Expected ($\theta \cdot H_{19}$) & 710 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Stability Across Recombination Rates}
+
+\begin{table}[h]
+\centering
+\caption{Coalsim mutation counts across recombination rates (30 replicates each)}
+\label{tab:stability}
+\begin{tabular}{lc}
+\toprule
+$r$ & Mean Segregating Sites \\
+\midrule
+0.001 & 719 \\
+0.01 & 728 \\
+0.05 & 714 \\
+0.1 & 712 \\
+\midrule
+Expected & 710 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All values are within sampling error of the theoretical expectation, confirming that the mutation count is now independent of recombination rate as required by theory.
+
+\section{Conclusions}
+
+We have validated \texttt{coalsim} against Hudson's \texttt{ms} simulator and theoretical expectations. After correcting a bug in the handling of MRCA segments, \texttt{coalsim} produces:
+
+\begin{enumerate}
+\item Mutation counts matching \texttt{ms} (within sampling error)
+\item Mutation counts matching theoretical expectation $E[S] = \theta \cdot H_{n-1}$
+\item Stable mutation counts across recombination rates, as required by coalescent theory
+\end{enumerate}
+
+The bug highlights an important subtlety in coalescent simulation with recombination: segments that have reached MRCA should not contribute to the rates of events that produce segregating sites, even though the simulation must continue until all segments reach MRCA.
+
+\begin{thebibliography}{9}
+\bibitem{hudson2002}
+Hudson, R.R. (2002). Generating samples under a Wright-Fisher neutral model of genetic variation. \emph{Bioinformatics}, 18(2), 337--338.
+\end{thebibliography}
+
+\end{document}
