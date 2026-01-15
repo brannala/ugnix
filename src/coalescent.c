@@ -154,7 +154,7 @@ chromosome* copy_chrom(chromosome* sourceChr)
   newChr = malloc(sizeof(chromosome));
   newChr->ancLen = sourceChr->ancLen;  /* copy cached ancestral length */
   currOld = sourceChr->anc;
-  newChr->anc = malloc(sizeof(ancestry));
+  newChr->anc = calloc(1, sizeof(ancestry));
   int firstAnc=1;
   currNew = newChr->anc;
   double prev_position = 0.0;  /* Track segment start for sparse check */
@@ -163,11 +163,14 @@ chromosome* copy_chrom(chromosome* sourceChr)
     {
       if(!firstAnc)
 	{
-	  currNew->next = malloc(sizeof(ancestry));
+	  currNew->next = calloc(1, sizeof(ancestry));
 	  currNew = currNew->next;
 	}
       firstAnc = 0;
       currNew->position = currOld->position;
+
+      /* Copy MRCA cache status */
+      currNew->is_mrca = currOld->is_mrca;
 
       /* Sparse optimization: skip bitarray copy for non-target segments.
        * But preserve zero bitarrays (non-ancestral) - don't convert to NULL
@@ -257,6 +260,18 @@ double calcAncLength(chrsample* chrom)
   return totLength;
 }
 
+/* Calculate total ACTIVE ancestral length (excluding segments at MRCA).
+ * This is what should be used for coalescence and mutation rates. */
+double calcActiveAncLength(chrsample* chrom, const bitarray* mrca)
+{
+  double totLength = 0;
+  for (int i = 0; i < chrom->count; i++)
+    {
+      totLength += calcChromAncLengthActive(chrom->chrs[i], mrca);
+    }
+  return totLength;
+}
+
 /* Get cached ancestral length */
 double getAncLength(const chrsample* chrom)
 {
@@ -266,7 +281,9 @@ double getAncLength(const chrsample* chrom)
 /* Calculate ancestral length for a single chromosome.
  * In sparse mode, NULL abits means "ancestral but not tracked in detail"
  * so those segments should contribute to length for correct rate calculations.
- * Only segments with explicit zero bitarray are non-ancestral. */
+ * Only segments with explicit zero bitarray are non-ancestral.
+ * Segments that have reached MRCA (bitarray = all samples) should NOT be
+ * counted, as no more coalescence events are possible there. */
 double calcChromAncLength(const chromosome* chr)
 {
   double length = 0;
@@ -281,10 +298,107 @@ double calcChromAncLength(const chromosome* chr)
   return length;
 }
 
+/* Calculate ancestral length excluding segments at MRCA.
+ * This is the "active" ancestry that can still coalesce.
+ * Uses cached is_mrca, bitarray_is_zero_fast, and bitarray_is_full_fast. */
+double calcChromAncLengthActive(const chromosome* chr, const bitarray* mrca)
+{
+  double length = 0;
+  double lastPos = 0;
+  ancestry* tmp = chr->anc;
+  while (tmp != NULL) {
+    double segLen = tmp->position - lastPos;
+    if (tmp->abits == NULL) {
+      /* Sparse mode: count as active */
+      length += segLen;
+    } else if (!tmp->is_mrca) {
+      /* Not cached as MRCA yet - check */
+      if (!bitarray_is_zero_fast(tmp->abits)) {
+        /* Fast inline check: segment can only be MRCA if all bits set */
+        if (!bitarray_is_full_fast(tmp->abits)) {
+          length += segLen;  /* Not full, definitely active */
+        } else if (!bitarray_equal(tmp->abits, mrca)) {
+          length += segLen;  /* Full but not matching (shouldn't happen) */
+        } else {
+          ((ancestry*)tmp)->is_mrca = 1;  /* Cache MRCA status */
+        }
+      }
+    }
+    /* If is_mrca == 1, segment is at MRCA, don't count */
+    lastPos = tmp->position;
+    tmp = tmp->next;
+  }
+  return length;
+}
+
+/* Count active segments and their total length (for progress estimation).
+ * Returns segment count, stores total length in *totalLen if not NULL.
+ * Uses cached is_mrca, bitarray_is_zero_fast, and bitarray_is_full_fast. */
+int countActiveSegments(chrsample* chrom, const bitarray* mrca, double* totalLen)
+{
+  int count = 0;
+  double length = 0;
+  for (int i = 0; i < chrom->count; i++) {
+    ancestry* tmp = chrom->chrs[i]->anc;
+    double lastPos = 0;
+    while (tmp != NULL) {
+      double segLen = tmp->position - lastPos;
+      int isActive = 0;
+      if (tmp->abits == NULL) {
+        isActive = 1;  /* Sparse mode */
+      } else if (!tmp->is_mrca) {
+        if (!bitarray_is_zero_fast(tmp->abits)) {
+          /* Fast inline check: not full means definitely not MRCA */
+          if (!bitarray_is_full_fast(tmp->abits)) {
+            isActive = 1;
+          } else if (!bitarray_equal(tmp->abits, mrca)) {
+            isActive = 1;
+          } else {
+            ((ancestry*)tmp)->is_mrca = 1;  /* Cache MRCA status */
+          }
+        }
+      }
+      if (isActive && segLen > 1e-9) {
+        count++;
+        length += segLen;
+      }
+      lastPos = tmp->position;
+      tmp = tmp->next;
+    }
+  }
+  if (totalLen) *totalLen = length;
+  return count;
+}
+
 /* Update ancLength cache after coalescence */
 void updateAncLengthCoal(chrsample* chrom, double removed)
 {
   chrom->ancLength -= removed;
+}
+
+/* Get active ancestral length with caching.
+ * Returns cached value if valid, otherwise recalculates and caches.
+ * Cache is invalidated after coalescence (when MRCA segments can change).
+ * Recombination and mutation don't change total active length, so cache
+ * remains valid after those events. */
+double getActiveAncLength(chrsample* chrom, const bitarray* mrca)
+{
+  if (!chrom->activeAncValid) {
+    chrom->activeAncLength = calcActiveAncLength(chrom, mrca);
+    chrom->activeAncValid = 1;
+  }
+  return chrom->activeAncLength;
+}
+
+/* Invalidate active ancestral length cache.
+ * Called after coalescence events because:
+ * 1. Segments merge, reducing total ancestral length
+ * 2. New MRCA segments may form
+ * Recombination preserves total active length (segments split but sum is same).
+ * Mutation doesn't change structure at all. */
+void invalidateActiveAncLength(chrsample* chrom)
+{
+  chrom->activeAncValid = 0;
 }
 
 /*
@@ -299,13 +413,26 @@ For high recombination rates, this is faster than the previous O(n * segments).
 
 void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 {
+  getRecEventActive(chrom, eventPos, recEv, NULL);
+}
+
+/* Get recombination event location, optionally skipping MRCA segments.
+ * If mrca is NULL, counts all non-zero segments (original behavior).
+ * If mrca is provided, skips segments where abits == mrca. */
+void getRecEventActive(chrsample* chrom, double eventPos, recombination_event* recEv,
+                       const bitarray* mrca)
+{
   int n = chrom->count;
 
-  /* Build cumulative sum array: cumSum[i] = sum of ancLen for chrs 0..i-1 */
+  /* Build cumulative sum array using active ancestry only */
   double* cumSum = alloca((n + 1) * sizeof(double));
   cumSum[0] = 0;
-  for (int i = 0; i < n; i++)
-    cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+  for (int i = 0; i < n; i++) {
+    if (mrca)
+      cumSum[i + 1] = cumSum[i] + calcChromAncLengthActive(chrom->chrs[i], mrca);
+    else
+      cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+  }
 
   /* Binary search: find largest i where cumSum[i] <= eventPos */
   int lo = 0, hi = n;
@@ -321,7 +448,7 @@ void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
   double cumLen = cumSum[lo];
 
   /* Linear scan within the target chromosome to find exact position.
-   * In sparse mode, NULL abits means "ancestral but not tracked" - count it. */
+   * Skip MRCA segments if mrca is provided. */
   ancestry* tmp_anc = chrom->chrs[lo]->anc;
   double lastPosition = 0;
   double currLength = cumLen;
@@ -329,7 +456,10 @@ void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 
   while (tmp_anc != NULL)
     {
-      if (tmp_anc->abits == NULL || !bitarray_is_zero(tmp_anc->abits))
+      int isActive = (tmp_anc->abits == NULL) ||
+                     (!bitarray_is_zero(tmp_anc->abits) &&
+                      (mrca == NULL || !bitarray_equal(tmp_anc->abits, mrca)));
+      if (isActive)
         currLength += tmp_anc->position - lastPosition;
       else
         nonAncestralLength += tmp_anc->position - lastPosition;
@@ -353,7 +483,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   chromosome* newLeft = malloc(sizeof(chromosome));
   chromosome* newRight = malloc(sizeof(chromosome));
 
-  newRight->anc = malloc(sizeof(ancestry));
+  newRight->anc = calloc(1, sizeof(ancestry));
   newRight->anc->abits = bitarray_create(g_noSamples);  /* zero bitarray */
   newRight->anc->position = recEv.location;
   newRight->anc->next = NULL;
@@ -362,7 +492,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
     {
       if (recEv.location < tmp->position)
 	{
-	  currAnc->next = malloc(sizeof(ancestry));
+	  currAnc->next = calloc(1, sizeof(ancestry));
 	  currAnc = currAnc->next;
 	  currAnc->next = NULL;
 	  currAnc->abits = bitarray_copy(tmp->abits);
@@ -371,7 +501,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
       tmp = tmp->next;
     }
 
-  newLeft->anc = malloc(sizeof(ancestry));
+  newLeft->anc = calloc(1, sizeof(ancestry));
   newLeft->anc->next = NULL;
   tmp = chrtmp->anc;
   currAnc = newLeft->anc;
@@ -380,7 +510,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
     {
       if (!atHead)
 	{
-	  currAnc->next = malloc(sizeof(ancestry));
+	  currAnc->next = calloc(1, sizeof(ancestry));
 	  currAnc = currAnc->next;
 	  currAnc->next = NULL;
 	}
@@ -391,13 +521,13 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
     }
   if (!atHead)
     {
-      currAnc->next = malloc(sizeof(ancestry));
+      currAnc->next = calloc(1, sizeof(ancestry));
       currAnc = currAnc->next;
       currAnc->next = NULL;
     }
   currAnc->abits = bitarray_copy(tmp->abits);
   currAnc->position = recEv.location;
-  currAnc->next = malloc(sizeof(ancestry));
+  currAnc->next = calloc(1, sizeof(ancestry));
   currAnc = currAnc->next;
   currAnc->abits = bitarray_create(g_noSamples);  /* zero bitarray */
   currAnc->position = 1.0;
@@ -434,11 +564,15 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
     }
 
   /* Count how many chromosomes we're adding.
-   * Sparse optimization: also prune chromosomes with no target-overlapping segments. */
+   * Sparse optimization: also prune chromosomes with no target-overlapping segments.
+   * Track new ancLen for updating total ancLength cache. */
   int added = 0;
+  double newAncLen = 0;
+
   if (hasAncLeft && chromosome_overlaps_targets(newLeft))
     {
       newLeft->ancLen = calcChromAncLength(newLeft);  /* cache for binary search */
+      newAncLen += newLeft->ancLen;
       appendChrom(chrom, newLeft);
       added++;
     }
@@ -452,6 +586,7 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   if (hasAncRight && chromosome_overlaps_targets(newRight))
     {
       newRight->ancLen = calcChromAncLength(newRight);  /* cache for binary search */
+      newAncLen += newRight->ancLen;
       appendChrom(chrom, newRight);
       added++;
     }
@@ -470,7 +605,7 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 {
   double epsilon = 1e-10;
   chromosome* commonAnc = malloc(sizeof(chromosome));
-  commonAnc->anc = malloc(sizeof(ancestry));
+  commonAnc->anc = calloc(1, sizeof(ancestry));
   commonAnc->anc->abits = NULL;  /* Will be set below */
   commonAnc->anc->position=0;
   commonAnc->anc->next = NULL;
@@ -536,7 +671,7 @@ chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
 
       if((anc1 != NULL)&&(anc2 != NULL))
 	 {
-	   tmp->next = malloc(sizeof(ancestry));
+	   tmp->next = calloc(1, sizeof(ancestry));
 	   tmp->next->next = NULL;
 	   tmp->next->abits = NULL;
 	   tmp->next->position=0;
@@ -636,6 +771,9 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom)
     free(commonAnc);
     (*noChrom)--;  /* One fewer chromosome */
   }
+
+  /* Invalidate active length cache - coalescence changes MRCA status */
+  invalidateActiveAncLength(chrom);
 }
 
 void updateCoalescentEvents(struct coalescent_events** coalescent_list,
@@ -939,12 +1077,14 @@ chrsample* create_sample(int noChrom)
   chromSample->chrs = malloc(chromSample->capacity * sizeof(chromosome*));
   chromSample->count = 0;
   chromSample->ancLength = noChrom;  /* Initial: each chromosome has length 1 */
+  chromSample->activeAncLength = noChrom;  /* Initially all segments are active */
+  chromSample->activeAncValid = 0;  /* Will be calculated on first use */
 
   // create array of n sampled chromosomes
   for (int i = 0; i < noChrom; i++)
     {
       chromosome* newChrom = malloc(sizeof(chromosome));
-      newChrom->anc = malloc(sizeof(ancestry));
+      newChrom->anc = calloc(1, sizeof(ancestry));
       newChrom->anc->next = NULL;
       newChrom->anc->abits = bitarray_singleton(g_noSamples, i);
       newChrom->anc->position = 1.0;
@@ -1190,13 +1330,26 @@ O(n + log n) = O(n) for building array + binary search.
 */
 void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time)
 {
+  getMutEventActive(chrom, eventPos, mutEv, time, NULL);
+}
+
+/* Get mutation event location, optionally skipping MRCA segments.
+ * If mrca is NULL, counts all non-zero segments (original behavior).
+ * If mrca is provided, skips segments where abits == mrca. */
+void getMutEventActive(chrsample* chrom, double eventPos, mutation* mutEv, double time,
+                       const bitarray* mrca)
+{
   int n = chrom->count;
 
-  /* Build cumulative sum array */
+  /* Build cumulative sum array using active ancestry only */
   double* cumSum = alloca((n + 1) * sizeof(double));
   cumSum[0] = 0;
-  for (int i = 0; i < n; i++)
-    cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+  for (int i = 0; i < n; i++) {
+    if (mrca)
+      cumSum[i + 1] = cumSum[i] + calcChromAncLengthActive(chrom->chrs[i], mrca);
+    else
+      cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
+  }
 
   /* Binary search: find largest i where cumSum[i] <= eventPos */
   int lo = 0, hi = n;
@@ -1210,7 +1363,7 @@ void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time
 
   double cumLen = cumSum[lo];
 
-  /* Linear scan within target chromosome */
+  /* Linear scan within target chromosome, skipping MRCA segments if provided */
   ancestry* tmp_anc = chrom->chrs[lo]->anc;
   double lastPosition = 0;
   double currLength = cumLen;
@@ -1218,7 +1371,10 @@ void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time
 
   while (tmp_anc != NULL)
     {
-      if (tmp_anc->abits == NULL || !bitarray_is_zero(tmp_anc->abits))
+      int isActive = (tmp_anc->abits == NULL) ||
+                     (!bitarray_is_zero(tmp_anc->abits) &&
+                      (mrca == NULL || !bitarray_equal(tmp_anc->abits, mrca)));
+      if (isActive)
         currLength += tmp_anc->position - lastPosition;
       else
         nonAncestralLength += tmp_anc->position - lastPosition;

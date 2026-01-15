@@ -31,6 +31,7 @@ struct ancestry
   double position;
   bitarray* abits;
   struct ancestry* next;
+  int is_mrca;  /* cached: 1 if segment has reached MRCA (permanent) */
 };
 typedef struct ancestry ancestry;
 
@@ -47,6 +48,8 @@ typedef struct
   int count;            /* current number of chromosomes */
   int capacity;         /* allocated capacity */
   double ancLength;     /* cached total ancestral length */
+  double activeAncLength; /* cached active length (excluding MRCA segments) */
+  int activeAncValid;   /* 1 if activeAncLength is valid, 0 if needs recalc */
 } chrsample;
 
 typedef struct
@@ -109,16 +112,37 @@ double calcAncLength(chrsample* chrom);
 /* Calculate ancestral length for a single chromosome */
 double calcChromAncLength(const chromosome* chr);
 
+/* Calculate active ancestral length (excluding MRCA segments) for a chromosome */
+double calcChromAncLengthActive(const chromosome* chr, const bitarray* mrca);
+
+/* Calculate total ACTIVE ancestral length (excluding segments at MRCA) */
+double calcActiveAncLength(chrsample* chrom, const bitarray* mrca);
+
+/* Count active segments and their total length (for progress estimation) */
+int countActiveSegments(chrsample* chrom, const bitarray* mrca, double* totalLen);
+
 /* Get cached ancestral length */
 double getAncLength(const chrsample* chrom);
 
 /* Update ancLength after coalescence (pass the overlap that was removed) */
 void updateAncLengthCoal(chrsample* chrom, double removed);
 
+/* Get active ancestral length with caching.
+ * Returns cached value if valid, otherwise recalculates.
+ * Cache is invalidated after coalescence (when MRCA segments can change). */
+double getActiveAncLength(chrsample* chrom, const bitarray* mrca);
+
+/* Invalidate active ancestral length cache (call after coalescence) */
+void invalidateActiveAncLength(chrsample* chrom);
+
 /* Append chromosome to sample (grows array if needed) */
 void appendChrom(chrsample* chrom, chromosome* chr);
 
 void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv);
+
+/* Get recombination event, skipping MRCA segments */
+void getRecEventActive(chrsample* chrom, double eventPos, recombination_event* recEv,
+                       const bitarray* mrca);
 
 void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom);
 
@@ -151,6 +175,10 @@ void MRCAStats(struct mrca_list* head, struct mrca_summary* mrca_head, double sm
 		  int seqUnits, char* baseUnit, int prn_mrca, int prn_regions);
 
 void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time);
+
+/* Get mutation event, skipping MRCA segments */
+void getMutEventActive(chrsample* chrom, double eventPos, mutation* mutEv, double time,
+                       const bitarray* mrca);
 
 void printMutations(mutation* mutation_list, long chromTotBases, int seqUnits,
 		    char* baseUnit, int noSamples, const bitarray* mrca);

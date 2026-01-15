@@ -19,7 +19,8 @@ typedef struct {
     unsigned long *bits;  /* array of 64-bit words */
     int nwords;           /* number of words allocated */
     int nbits;            /* number of bits (sample size) */
-    int is_zero;          /* cached: 1 if all bits are zero, 0 otherwise */
+    int is_zero;          /* cached: 1 if all zero, 0 if not, -1 unknown */
+    int is_full;          /* cached: 1 if all set, 0 if not, -1 unknown */
 } bitarray;
 
 /* Calculate number of words needed for n bits */
@@ -39,14 +40,15 @@ bitarray* bitarray_copy(const bitarray *ba);
 /* Set bit at position i */
 static inline void bitarray_set(bitarray *ba, int i) {
     ba->bits[i / BITS_PER_WORD] |= (1UL << (i % BITS_PER_WORD));
-    ba->is_zero = 0;  /* now has at least one bit set */
+    ba->is_zero = 0;   /* now has at least one bit set */
+    ba->is_full = -1;  /* might be full now, unknown */
 }
 
 /* Clear bit at position i - may need to recompute is_zero */
 static inline void bitarray_clear(bitarray *ba, int i) {
     ba->bits[i / BITS_PER_WORD] &= ~(1UL << (i % BITS_PER_WORD));
-    /* is_zero status unknown - mark as needing recompute (-1) */
-    ba->is_zero = -1;
+    ba->is_zero = -1;  /* might be zero now, unknown */
+    ba->is_full = 0;   /* definitely not full */
 }
 
 /* Test if bit at position i is set */
@@ -74,6 +76,45 @@ int bitarray_equal(const bitarray *a, const bitarray *b);
 
 /* Test if bitarray is all zeros */
 int bitarray_is_zero(const bitarray *ba);
+
+/* Fast inline check for is_zero - uses cache, optimized for small n */
+static inline int bitarray_is_zero_fast(const bitarray *ba) {
+    /* Use cached value if available */
+    if (ba->is_zero >= 0) return ba->is_zero;
+    /* If we know it's full, it's not zero */
+    if (ba->is_full == 1) {
+        ((bitarray*)ba)->is_zero = 0;
+        return 0;
+    }
+    /* For single-word bitarrays (n <= 64), do direct check */
+    if (ba->nwords == 1) {
+        int zero = (ba->bits[0] == 0);
+        ((bitarray*)ba)->is_zero = zero;
+        return zero;
+    }
+    /* Fall back to full function */
+    return bitarray_is_zero(ba);
+}
+
+/* Test if all nbits are set (full/MRCA) */
+int bitarray_is_full(const bitarray *ba);
+
+/* Fast inline check for is_full - uses cache, optimized for small n */
+static inline int bitarray_is_full_fast(const bitarray *ba) {
+    /* Use cached value if available */
+    if (ba->is_full >= 0) return ba->is_full;
+
+    /* For single-word bitarrays (n <= 64), do direct comparison */
+    if (ba->nwords == 1) {
+        unsigned long mask = (1UL << ba->nbits) - 1;
+        int full = (ba->bits[0] == mask);
+        ((bitarray*)ba)->is_full = full;
+        return full;
+    }
+
+    /* Fall back to full function for larger bitarrays */
+    return bitarray_is_full(ba);
+}
 
 /* Test if exactly one bit is set (singleton) */
 int bitarray_is_singleton(const bitarray *ba);

@@ -15,6 +15,7 @@ gsl_rng * r;
 int opt_help = 0; /* print help message */
 int opt_default = 0; /* print help message */
 int opt_verbose = 0; /* verbose progress output */
+int opt_progress = 1; /* show progress bar with ETA (on by default) */
 int prn_chrom = 0; /* print chromosomes */
 int prn_mrca = 0; /* print MRCAs */
 int prn_mutations = 0; /* print mutations */
@@ -43,8 +44,8 @@ double target_region_length = 0.0001;  /* default: 0.01 cM = 10kb at 1cM/Mb */
 double target_first_start = 0.01;      /* default: start at 1% into chromosome */
 double target_spacing = 0;             /* default: evenly distributed */
 
-/* Progress reporting interval (events) */
-#define PROGRESS_INTERVAL 10000
+/* Progress reporting interval (seconds) */
+#define PROGRESS_INTERVAL_SEC 2.0
 
 static void print_msg()
 {
@@ -69,7 +70,8 @@ static void print_help()
 	 "-M <substitution model: JC69 (default) or HKY>\n"
 	 "-k <kappa: transition/transversion ratio for HKY (default 2.0)>\n"
 	 "-p <base frequencies piA,piC,piG,piT for HKY (default 0.25,0.25,0.25,0.25)>\n"
-	 "-v verbose progress output\n"
+	 "-v verbose progress output with ETA\n"
+	 "-q quiet mode (disable progress bar)\n"
 	 "\nSparse simulation (target regions):\n"
 	 "-T <n,len,start,gap> Generate n target regions of length len (in cM/100),\n"
 	 "                     starting at position start, separated by gap.\n"
@@ -102,7 +104,7 @@ int main(int argc, char **argv)
   const gsl_rng_type * T;
   
 
-  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:V:g:M:k:p:T:R:dlhv")) != -1)
+  while((c = getopt(argc, argv, "c:N:r:m:s:u:a:o:V:g:M:k:p:T:R:dlhvq")) != -1)
     switch(c)
       {
       case 'c':
@@ -267,6 +269,9 @@ int main(int argc, char **argv)
       case 'v':
 	opt_verbose = 1;
 	break;
+      case 'q':
+	opt_progress = 0;
+	break;
       case '?':
         if (isprint (optopt))
           fprintf(stderr, "Unknown option `-%c'.\n", optopt);
@@ -395,18 +400,119 @@ int main(int argc, char **argv)
   /* MRCA check flag - only check after coalescence events (not rec/mut) */
   int mrca_reached = 0;
 
+  /* Wall-clock time tracking for progress ETA */
+  struct timespec start_time, current_time;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
+  double last_progress_time = 0;  /* time of last progress update */
+
+  /* Track progress and segment history for ETA prediction */
+  #define S_HISTORY 5
+  int seg_history[S_HISTORY] = {0};
+  double dSdt_history[S_HISTORY] = {0};  /* for computing d²S/dt² */
+  double prog_history[S_HISTORY] = {0};
+  double time_history[S_HISTORY] = {0};
+  int hist_idx = 0;
+  int hist_count = 0;
+  double peak_time = 0;  /* time when peak S was detected */
+  int peak_detected = 0; /* flag for phase tracking */
+  int pre_peak_coal = 0, post_peak_coal = 0;
+  int pre_peak_rec = 0, post_peak_rec = 0;
+
   while((noChrom > 1) && !mrca_reached)
   {
     double prob = 0;
     eventNo++;
 
-    /* Progress reporting (only when verbose) */
-    if (opt_verbose && (eventNo % PROGRESS_INTERVAL == 0))
-      fprintf(stderr, "\r  Events: %d | Chrom: %d | Coal: %d | Rec: %d | Mut: %d | Time: %.1f  ",
-              eventNo, noChrom, noCoal, noRec, noMutations, totalTime);
+    /* Progress reporting with ETA prediction (-v enables, -q disables)
+     * Time-based updates: check clock every 1000 events, update if interval passed */
+    if (opt_verbose && opt_progress && (eventNo % 1000 == 0))
+      {
+        clock_gettime(CLOCK_MONOTONIC, &current_time);
+        double elapsed = (current_time.tv_sec - start_time.tv_sec) +
+                         (current_time.tv_nsec - start_time.tv_nsec) / 1e9;
+        if (elapsed - last_progress_time < PROGRESS_INTERVAL_SEC) goto skip_progress;
+        last_progress_time = elapsed;
+        double progress = 1.0 - (ancLength / noSamples);
 
-    /* Use cached ancLength (updated incrementally by coalescence) */
-    ancLength = getAncLength(chromSample);
+        /* Use chromosome count for ETA calculation (O(1)).
+         * Segment count is expensive to compute; chromosome count
+         * correlates well with progress and is always available. */
+        int numSegs = noChrom;
+
+        /* Update circular history buffer */
+        seg_history[hist_idx] = numSegs;
+        prog_history[hist_idx] = progress;
+        time_history[hist_idx] = elapsed;
+        hist_idx = (hist_idx + 1) % S_HISTORY;
+        if (hist_count < S_HISTORY) hist_count++;
+
+        /* Compute ETA using segment dynamics:
+         * - Before peak S: use d²S/dt² to predict time to peak, then double
+         * - After peak S: use dp/dt to extrapolate remaining time */
+        double eta = 0;
+        int past_peak = 0;
+        if (hist_count >= 2) {
+          int oldest = (hist_idx - hist_count + S_HISTORY) % S_HISTORY;
+          int newest = (hist_idx - 1 + S_HISTORY) % S_HISTORY;
+          double dS = seg_history[newest] - seg_history[oldest];
+          double dp = prog_history[newest] - prog_history[oldest];
+          double dt = time_history[newest] - time_history[oldest];
+
+          if (dt > 0.1) {
+            double dSdt = dS / dt;
+            dSdt_history[(hist_idx - 1 + S_HISTORY) % S_HISTORY] = dSdt;
+
+            if (dSdt < -1.0) {
+              /* Post-peak: S decreasing, use progress rate */
+              past_peak = 1;
+              if (!peak_detected) {
+                peak_detected = 1;
+                peak_time = elapsed;
+              }
+              if (dp > 0.001)
+                eta = (1.0 - progress) / (dp / dt);
+            } else if (dSdt > 0 && hist_count >= 3) {
+              /* Pre-peak: extrapolate to peak using acceleration */
+              int prev = (newest - 1 + S_HISTORY) % S_HISTORY;
+              double prev_dSdt = dSdt_history[prev];
+              double dSdt_dt = time_history[newest] - time_history[prev];
+              if (dSdt_dt > 0.1 && prev_dSdt > 0) {
+                double d2Sdt2 = (dSdt - prev_dSdt) / dSdt_dt;
+                if (d2Sdt2 < -0.1) {
+                  double time_to_peak = -dSdt / d2Sdt2;
+                  if (time_to_peak > 0 && time_to_peak < elapsed * 10)
+                    eta = 2.0 * (elapsed + time_to_peak) - elapsed;
+                }
+              }
+            }
+          }
+        }
+
+        /* Display progress bar with ETA */
+        int bar_width = 30, filled = (int)(progress * bar_width);
+        char bar[32];
+        for (int i = 0; i < bar_width; i++) bar[i] = (i < filled) ? '=' : ' ';
+        bar[bar_width] = '\0';
+        int e_min = (int)(elapsed / 60), e_sec = (int)elapsed % 60;
+
+        if (eta > 0) {
+          int eta_min = (int)(eta / 60), eta_sec = (int)eta % 60;
+          fprintf(stderr, "\r  [%s] %5.1f%% | %6d ev | %d:%02d elapsed | ETA: %s%d:%02d  ",
+                  bar, progress * 100, eventNo, e_min, e_sec,
+                  past_peak ? "" : "~", eta_min, eta_sec);
+        } else {
+          fprintf(stderr, "\r  [%s] %5.1f%% | %6d ev | %d:%02d elapsed | S=%d  ",
+                  bar, progress * 100, eventNo, e_min, e_sec, numSegs);
+        }
+      }
+    skip_progress:
+
+    /* Use ACTIVE ancLength (excluding MRCA segments).
+     * MRCA segments should not contribute to recombination or mutation rates
+     * because mutations there would be fixed (not segregating sites).
+     * Uses caching: only recalculates after coalescence (when MRCA changes).
+     * Recombination and mutation don't change total active length. */
+    ancLength = getActiveAncLength(chromSample, mrca);
     assert(ancLength <= noSamples);
     totRate = (noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize))+(recRate +mutRate)*ancLength;
     coalProb = ((noChrom*(noChrom-1)/2.0)*(1.0/(2.0*popSize)))/totRate;
@@ -426,6 +532,7 @@ int main(int argc, char **argv)
       	if(calc_mrca || prn_genetrees)
 	  getMRCAs(&head,chromSample,totalTime,mrca);
 	noCoal++;
+	if (peak_detected) post_peak_coal++; else pre_peak_coal++;
 	/* Check MRCA only after coalescence (when it can actually change) */
 	mrca_reached = TestMRCAForTargetRegions(chromSample, mrca, target_regions);
       } 
@@ -435,9 +542,10 @@ int main(int argc, char **argv)
 	{
 	  eventLocation = ancLength*gsl_rng_uniform_pos(r);
 	  assert(eventLocation <= ancLength);
-	  getRecEvent(chromSample, eventLocation, &recombEvent);
+	  getRecEventActive(chromSample, eventLocation, &recombEvent, mrca);
 	  recombination(&noChrom,recombEvent,chromSample);
 	  noRec++;
+	  if (peak_detected) post_peak_rec++; else pre_peak_rec++;
 	}
       else
 	/* mutation event */
@@ -446,7 +554,7 @@ int main(int argc, char **argv)
 	  tmpMut->next = NULL;
 	  eventLocation = ancLength*gsl_rng_uniform_pos(r);
 	  assert(eventLocation <= ancLength);
-	  getMutEvent(chromSample, eventLocation, tmpMut, totalTime);
+	  getMutEventActive(chromSample, eventLocation, tmpMut, totalTime, mrca);
 	  /* Filter mutations to target regions if sparse simulation enabled */
 	  if (!position_in_target_regions(tmpMut->location, target_regions)) {
 	    /* Mutation outside target regions - discard it */
@@ -470,9 +578,20 @@ int main(int argc, char **argv)
   }
 
   /* Final progress message */
-  if (opt_verbose)
-    fprintf(stderr, "\r  Completed: %d events | Coal: %d | Rec: %d | Mut: %d              \n",
-            eventNo, noCoal, noRec, noMutations);
+  if (opt_verbose && opt_progress)
+    {
+      clock_gettime(CLOCK_MONOTONIC, &current_time);
+      double elapsed = (current_time.tv_sec - start_time.tv_sec) +
+                       (current_time.tv_nsec - start_time.tv_nsec) / 1e9;
+      fprintf(stderr, "\r  [");
+      for (int i = 0; i < 30; i++) fprintf(stderr, "=");
+      if (elapsed >= 60)
+        fprintf(stderr, "] 100.0%% | %6d ev | %d:%02d elapsed    \n",
+                eventNo, (int)(elapsed/60), (int)elapsed % 60);
+      else
+        fprintf(stderr, "] 100.0%% | %6d ev | %.1fs elapsed      \n",
+                eventNo, elapsed);
+    }
 
   /* summarize run input and output */
   printf("N:%.0f n:%d r:%.2f ",popSize,noSamples,recRate);
@@ -489,8 +608,18 @@ int main(int argc, char **argv)
   printf("No_Recombinations: %d ",noRec);
   printf("No_Mutations: %d ",noMutations);
   printf("No_Ancestral_Chromosomes: %d\n",noChrom);
-  printf("Oldest_TMRCA: %.2lf ",totalTime);
-  
+  printf("Oldest_TMRCA: %.2lf\n",totalTime);
+
+  /* Phase statistics (if verbose mode was used) */
+  if (opt_verbose && peak_time > 0) {
+    clock_gettime(CLOCK_MONOTONIC, &current_time);
+    double total_elapsed = (current_time.tv_sec - start_time.tv_sec) +
+                           (current_time.tv_nsec - start_time.tv_nsec) / 1e9;
+    printf("Phase_Stats: pre-peak=%.1fs (%d coal, %d rec) post-peak=%.1fs (%d coal, %d rec)\n",
+           peak_time, pre_peak_coal, pre_peak_rec,
+           total_elapsed - peak_time, post_peak_coal, post_peak_rec);
+  }
+
   if(calc_mrca)
     MRCAStats(head,mrca_head,smalldiff,chromTotBases,seqUnits,baseUnit,prn_mrca,prn_regions);
   else

@@ -66,6 +66,7 @@ bitarray* bitarray_create(int nbits) {
         bitarray *ba = &entry->ba;
         memset(ba->bits, 0, ba->nwords * sizeof(unsigned long));
         ba->is_zero = 1;  /* freshly cleared */
+        ba->is_full = 0;  /* empty is not full */
         return ba;
     }
 
@@ -81,6 +82,7 @@ bitarray* bitarray_create(int nbits) {
         return NULL;
     }
     entry->ba.is_zero = 1;  /* calloc zeros the bits */
+    entry->ba.is_full = 0;  /* empty is not full */
     entry->next = NULL;
     return &entry->ba;
 }
@@ -111,13 +113,15 @@ bitarray* bitarray_copy(const bitarray *ba) {
     if (!copy) return NULL;
 
     memcpy(copy->bits, ba->bits, ba->nwords * sizeof(unsigned long));
-    copy->is_zero = ba->is_zero;  /* copy the cached flag */
+    copy->is_zero = ba->is_zero;  /* copy cached flags */
+    copy->is_full = ba->is_full;
     return copy;
 }
 
 void bitarray_clear_all(bitarray *ba) {
     memset(ba->bits, 0, ba->nwords * sizeof(unsigned long));
     ba->is_zero = 1;  /* now all zeros */
+    ba->is_full = 0;  /* definitely not full */
 }
 
 void bitarray_union(bitarray *dst, const bitarray *src) {
@@ -130,6 +134,12 @@ void bitarray_union(bitarray *dst, const bitarray *src) {
     else if (src->is_zero == 0)
         dst->is_zero = 0;  /* src had bits, so dst now has bits */
     /* else dst->is_zero unchanged (src was zero) */
+
+    /* is_full: if either was full, result is full; else unknown */
+    if (dst->is_full == 1 || src->is_full == 1)
+        dst->is_full = 1;
+    else
+        dst->is_full = -1;  /* unknown */
 }
 
 void bitarray_union_into(bitarray *dst, const bitarray *a, const bitarray *b) {
@@ -138,6 +148,8 @@ void bitarray_union_into(bitarray *dst, const bitarray *a, const bitarray *b) {
     }
     /* Result is zero only if both inputs are zero */
     dst->is_zero = (a->is_zero == 1 && b->is_zero == 1) ? 1 : 0;
+    /* is_full: if either input is full, result is full; else unknown */
+    dst->is_full = (a->is_full == 1 || b->is_full == 1) ? 1 : -1;
 }
 
 void bitarray_intersect(bitarray *dst, const bitarray *src) {
@@ -149,6 +161,11 @@ void bitarray_intersect(bitarray *dst, const bitarray *src) {
         dst->is_zero = 1;
     else
         dst->is_zero = -1;  /* unknown, need to recompute if checked */
+    /* is_full only if both inputs were full */
+    if (dst->is_full == 1 && src->is_full == 1)
+        dst->is_full = 1;
+    else
+        dst->is_full = -1;  /* unknown */
 }
 
 void bitarray_complement(bitarray *dst, const bitarray *src) {
@@ -161,8 +178,9 @@ void bitarray_complement(bitarray *dst, const bitarray *src) {
         unsigned long mask = (1UL << extra_bits) - 1;
         dst->bits[dst->nwords - 1] &= mask;
     }
-    /* Complement of zero is non-zero (if nbits > 0) */
-    dst->is_zero = (src->is_zero == 1 && dst->nbits > 0) ? 0 : -1;
+    /* Complement of zero is full (if nbits > 0), complement of full is zero */
+    dst->is_zero = (src->is_full == 1) ? 1 : ((src->is_zero == 1 && dst->nbits > 0) ? 0 : -1);
+    dst->is_full = (src->is_zero == 1 && dst->nbits > 0) ? 1 : ((src->is_full == 1) ? 0 : -1);
 }
 
 int bitarray_equal(const bitarray *a, const bitarray *b) {
@@ -177,6 +195,12 @@ int bitarray_is_zero(const bitarray *ba) {
     /* Use cached value if available */
     if (ba->is_zero >= 0) return ba->is_zero;
 
+    /* If we know it's full, it's definitely not zero */
+    if (ba->is_full == 1) {
+        ((bitarray*)ba)->is_zero = 0;
+        return 0;
+    }
+
     /* Recompute if unknown (-1) */
     for (int i = 0; i < ba->nwords; i++) {
         if (ba->bits[i] != 0) {
@@ -185,6 +209,36 @@ int bitarray_is_zero(const bitarray *ba) {
         }
     }
     ((bitarray*)ba)->is_zero = 1;  /* cache the result */
+    return 1;
+}
+
+int bitarray_is_full(const bitarray *ba) {
+    /* Use cached value if available */
+    if (ba->is_full >= 0) return ba->is_full;
+
+    /* Check if all nbits are set */
+    int nbits = ba->nbits;
+    int full_words = nbits / BITS_PER_WORD;
+
+    /* Check all complete words */
+    for (int i = 0; i < full_words; i++) {
+        if (ba->bits[i] != ~0UL) {
+            ((bitarray*)ba)->is_full = 0;
+            return 0;
+        }
+    }
+
+    /* Check remaining bits in last partial word */
+    int remaining = nbits % BITS_PER_WORD;
+    if (remaining > 0) {
+        unsigned long mask = (1UL << remaining) - 1;
+        if ((ba->bits[full_words] & mask) != mask) {
+            ((bitarray*)ba)->is_full = 0;
+            return 0;
+        }
+    }
+
+    ((bitarray*)ba)->is_full = 1;
     return 1;
 }
 
@@ -214,7 +268,8 @@ int bitarray_intersects(const bitarray *a, const bitarray *b) {
 
 void bitarray_copy_to(bitarray *dst, const bitarray *src) {
     memcpy(dst->bits, src->bits, dst->nwords * sizeof(unsigned long));
-    dst->is_zero = src->is_zero;  /* copy the cached flag */
+    dst->is_zero = src->is_zero;  /* copy cached flags */
+    dst->is_full = src->is_full;
 }
 
 void bitarray_print(const bitarray *ba, FILE *out) {
