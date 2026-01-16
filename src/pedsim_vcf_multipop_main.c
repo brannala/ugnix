@@ -93,6 +93,7 @@ static void print_usage(const char* progname)
     fprintf(stderr, "  -N LIST   Population sizes, comma-separated (e.g., 1000,500,2000)\n");
     fprintf(stderr, "  -n LIST   Sample sizes, comma-separated (e.g., 10,5,20)\n");
     fprintf(stderr, "  -g NUM    Number of generations to trace back (default: 5)\n");
+    fprintf(stderr, "  -c NUM    Number of chromosomes to simulate (default: 1)\n");
     fprintf(stderr, "\nMigration options:\n");
     fprintf(stderr, "  -m STR    Full migration matrix, semicolon-separated rows\n");
     fprintf(stderr, "  -M NUM    Symmetric island model migration rate\n");
@@ -110,9 +111,8 @@ static void print_usage(const char* progname)
     fprintf(stderr, "\nExamples:\n");
     fprintf(stderr, "  # Two populations with island model migration\n");
     fprintf(stderr, "  %s -J 2 -N 1000,500 -n 10,5 -M 0.01 -g 5 -E 10000 -o output.vcf\n", progname);
-    fprintf(stderr, "\n  # Three populations with custom migration\n");
-    fprintf(stderr, "  %s -J 3 -N 1000,500,2000 -n 10,5,20 \\\n", progname);
-    fprintf(stderr, "     -m \"0,0.01,0.02;0.01,0,0.01;0.02,0.01,0\" -o output.vcf\n");
+    fprintf(stderr, "\n  # Five chromosomes with custom migration\n");
+    fprintf(stderr, "  %s -J 2 -N 1000 -n 50 -M 0.1 -c 5 -o output.vcf\n", progname);
 }
 
 int main(int argc, char** argv)
@@ -123,6 +123,7 @@ int main(int argc, char** argv)
         .migration = NULL,
         .island_m = -1.0,
         .n_generations = 5,
+        .n_chromosomes = 1,
         .coal_pop_size = 10000,
         .rec_rate = 1.0,
         .mut_rate = 0.5,
@@ -138,7 +139,7 @@ int main(int argc, char** argv)
     char* mig_str = NULL;
 
     int c;
-    while ((c = getopt(argc, argv, "J:N:n:g:m:M:E:r:u:s:o:Skvh")) != -1) {
+    while ((c = getopt(argc, argv, "J:N:n:g:c:m:M:E:r:u:s:o:Skvh")) != -1) {
         switch (c) {
             case 'J':
                 params.n_populations = atoi(optarg);
@@ -151,6 +152,13 @@ int main(int argc, char** argv)
                 break;
             case 'g':
                 params.n_generations = atoi(optarg);
+                break;
+            case 'c':
+                params.n_chromosomes = atoi(optarg);
+                if (params.n_chromosomes < 1 || params.n_chromosomes > 64) {
+                    fprintf(stderr, "Error: number of chromosomes must be 1-64\n");
+                    return 1;
+                }
                 break;
             case 'm':
                 mig_str = optarg;
@@ -293,6 +301,7 @@ int main(int argc, char** argv)
                 params.populations[i].sample_size);
     }
     fprintf(stderr, "Generations: %d\n", params.n_generations);
+    fprintf(stderr, "Chromosomes: %d\n", params.n_chromosomes);
 
     if (params.migration) {
         fprintf(stderr, "Migration matrix:\n");

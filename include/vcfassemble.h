@@ -11,6 +11,7 @@
 
 /* A single mutation from founder VCF */
 typedef struct {
+    int chrom_id;           /* chromosome ID (1-based) */
     long position;          /* 1-based position */
     char ref;               /* reference allele */
     char alt;               /* alternate allele */
@@ -23,7 +24,8 @@ typedef struct {
     vcf_mutation* mutations;
     int n_mutations;
     int capacity;
-    long chrom_length;
+    int n_chromosomes;      /* number of chromosomes */
+    long* chrom_lengths;    /* length of each chromosome (1-indexed) */
     char** founder_names;   /* sample names from VCF header */
     int n_founder_samples;  /* number of founder samples (haplotypes = 2x this) */
 } founder_vcf;
@@ -39,6 +41,7 @@ typedef struct {
 /* Sample's chromosome inheritance */
 typedef struct {
     char name[MAX_NAME_LENGTH];
+    int chrom_id;           /* chromosome ID (1-based) */
     int homolog;            /* which homolog (0=paternal, 1=maternal) */
     segment* segments;
     int n_segments;
@@ -53,6 +56,7 @@ typedef struct {
     sample_chrom* chroms;
     int n_chroms;
     int capacity;
+    int n_chromosomes;      /* number of distinct chromosomes */
     char** sample_names;    /* unique sample names */
     int n_samples;
     void* founder_map;      /* internal founder name -> VCF index mapping */

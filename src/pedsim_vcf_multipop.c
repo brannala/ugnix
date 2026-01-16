@@ -189,23 +189,95 @@ int run_multipop_vcf_pipeline(multipop_vcf_pipeline_params* params)
     fprintf(stderr, "Pedigree has %d founders (%d haplotypes) across %d populations\n",
             n_founders, n_haplotypes, params->n_populations);
 
-    /* Step 2: Run coalsim to simulate founder haplotypes */
+    /* Step 2: Run coalsim for each chromosome */
+    int n_chromosomes = params->n_chromosomes;
+    if (n_chromosomes < 1) n_chromosomes = 1;
+
     fprintf(stderr, "\n=== Step 2: Simulating founder haplotypes (VCF) ===\n");
-    snprintf(cmd, sizeof(cmd),
-             "./coalsim -c %d -N %.0f -r %.4f -m %.4f -s %u -u b -V %s",
-             n_haplotypes, params->coal_pop_size, params->rec_rate,
-             params->mut_rate, params->seed + 1, vcf_file);
-    ret = run_command(cmd, params->verbose);
-    if (ret != 0) {
-        fprintf(stderr, "Error: coalsim failed\n");
-        goto cleanup;
+    fprintf(stderr, "Simulating %d chromosome(s)...\n", n_chromosomes);
+
+    if (n_chromosomes == 1) {
+        /* Single chromosome - direct output */
+        snprintf(cmd, sizeof(cmd),
+                 "./coalsim -c %d -N %.0f -r %.4f -m %.4f -s %u -u b -V %s",
+                 n_haplotypes, params->coal_pop_size, params->rec_rate,
+                 params->mut_rate, params->seed + 1, vcf_file);
+        ret = run_command(cmd, params->verbose);
+        if (ret != 0) {
+            fprintf(stderr, "Error: coalsim failed\n");
+            goto cleanup;
+        }
+    } else {
+        /* Multiple chromosomes - run coalsim for each, then merge */
+        char chr_vcf[512];
+        FILE* merged_fp = fopen(vcf_file, "w");
+        if (!merged_fp) {
+            fprintf(stderr, "Error: cannot create merged VCF file\n");
+            ret = 1;
+            goto cleanup;
+        }
+
+        int contigs_written = 0;
+        int header_line_written = 0;
+        for (int chr = 1; chr <= n_chromosomes; chr++) {
+            snprintf(chr_vcf, sizeof(chr_vcf), "%s/chr%d.vcf", temp_dir, chr);
+            snprintf(cmd, sizeof(cmd),
+                     "./coalsim -c %d -N %.0f -r %.4f -m %.4f -s %u -u b -V %s",
+                     n_haplotypes, params->coal_pop_size, params->rec_rate,
+                     params->mut_rate, params->seed + chr, chr_vcf);
+            ret = run_command(cmd, params->verbose);
+            if (ret != 0) {
+                fprintf(stderr, "Error: coalsim failed for chromosome %d\n", chr);
+                fclose(merged_fp);
+                goto cleanup;
+            }
+
+            /* Merge into combined VCF */
+            FILE* chr_fp = fopen(chr_vcf, "r");
+            if (!chr_fp) {
+                fprintf(stderr, "Error: cannot read chromosome %d VCF\n", chr);
+                fclose(merged_fp);
+                ret = 1;
+                goto cleanup;
+            }
+
+            char line[65536];
+            while (fgets(line, sizeof(line), chr_fp)) {
+                if (line[0] == '#') {
+                    /* Header lines - only write once from first chromosome */
+                    if (chr == 1) {
+                        if (strncmp(line, "##contig", 8) == 0) {
+                            if (!contigs_written) {
+                                /* Write contig lines for all chromosomes */
+                                for (int c = 1; c <= n_chromosomes; c++) {
+                                    fprintf(merged_fp, "##contig=<ID=chr%d,length=10000000>\n", c);
+                                }
+                                contigs_written = 1;
+                            }
+                        } else if (strncmp(line, "#CHROM", 6) == 0) {
+                            fprintf(merged_fp, "%s", line);
+                            header_line_written = 1;
+                        } else {
+                            /* Other header lines (##fileformat, ##FORMAT, etc.) */
+                            fprintf(merged_fp, "%s", line);
+                        }
+                    }
+                } else {
+                    /* Data line - replace chr1 with chrN */
+                    fprintf(merged_fp, "chr%d%s", chr, line + 4);  /* Skip "chr1" */
+                }
+            }
+            fclose(chr_fp);
+        }
+        fclose(merged_fp);
+        (void)header_line_written;  /* Suppress unused warning */
     }
 
     /* Step 3: Run pedtrans to simulate chromosome transmission */
     fprintf(stderr, "\n=== Step 3: Simulating chromosome transmission ===\n");
     snprintf(cmd, sizeof(cmd),
-             "./pedtrans -r %.4f -s %u -o %s %s",
-             params->rec_rate, params->seed + 2, seg_file, ped_file);
+             "./pedtrans -c %d -r %.4f -s %u -o %s %s",
+             n_chromosomes, params->rec_rate, params->seed + 2, seg_file, ped_file);
     ret = run_command(cmd, params->verbose);
     if (ret != 0) {
         fprintf(stderr, "Error: pedtrans failed\n");

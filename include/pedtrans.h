@@ -102,10 +102,12 @@ typedef struct {
 
 /*
  * Complete simulation state
+ * Supports multiple independent chromosomes per individual
  */
 typedef struct {
     pedigree* ped;                     /* Pedigree structure */
-    diploid_chromosomes* chromosomes;  /* Array indexed by individual ID */
+    diploid_chromosomes* chromosomes;  /* Array: [indiv_id * n_chromosomes + chr_id] */
+    int n_chromosomes;                 /* Number of chromosomes per individual */
     double rec_rate;                   /* Recombination rate (expected crossovers) */
     gsl_rng* rng;                      /* Random number generator */
     unsigned long seed;                /* RNG seed for reproducibility */
@@ -238,11 +240,12 @@ void free_simulation(ped_simulation* sim);
 
 /*
  * Run simulation on pedigree file
- * rec_rate: expected number of crossovers per meiosis
+ * n_chromosomes: number of independent chromosomes to simulate
+ * rec_rate: expected number of crossovers per meiosis (per chromosome)
  * seed: RNG seed (0 for time-based)
  */
-ped_simulation* simulate_pedigree(const char* ped_file, double rec_rate,
-                                   unsigned long seed);
+ped_simulation* simulate_pedigree(const char* ped_file, int n_chromosomes,
+                                   double rec_rate, unsigned long seed);
 
 /* ============================================================================
  * OUTPUT FUNCTIONS

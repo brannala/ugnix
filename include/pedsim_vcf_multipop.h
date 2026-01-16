@@ -33,6 +33,7 @@ typedef struct {
 
     /* Shared pedigree parameters */
     int n_generations;              /* k: generations to trace back */
+    int n_chromosomes;              /* c: number of chromosomes to simulate */
 
     /* Coalescent parameters */
     double coal_pop_size;           /* Ne: effective population size */

@@ -59,8 +59,8 @@ int main(int argc, char** argv)
     if (!fvcf) {
         return 1;
     }
-    fprintf(stderr, "  %d mutations, %d founder haplotypes, %ld bp chromosome\n",
-            fvcf->n_mutations, fvcf->n_founder_samples, fvcf->chrom_length);
+    fprintf(stderr, "  %d mutations, %d founder haplotypes, %d chromosomes\n",
+            fvcf->n_mutations, fvcf->n_founder_samples, fvcf->n_chromosomes);
 
     /* Read pedtrans segments */
     fprintf(stderr, "Reading pedtrans segments: %s\n", pedtrans_file);
@@ -69,8 +69,8 @@ int main(int argc, char** argv)
         free_founder_vcf(fvcf);
         return 1;
     }
-    fprintf(stderr, "  %d sample chromosomes, %d unique samples\n",
-            pts->n_chroms, pts->n_samples);
+    fprintf(stderr, "  %d sample chromosomes, %d unique samples, %d chromosomes\n",
+            pts->n_chroms, pts->n_samples, pts->n_chromosomes);
 
     /* Open output file */
     FILE* out = fopen(output_file, "w");

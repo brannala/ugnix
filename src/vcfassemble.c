@@ -1,7 +1,17 @@
 #include <ctype.h>
 #include "vcfassemble.h"
 
-/* Read founder VCF file */
+/* Parse chromosome ID from name like "chr1", "chr2", etc. */
+static int parse_chrom_id(const char* chrom_name)
+{
+    if (strncmp(chrom_name, "chr", 3) == 0) {
+        return atoi(chrom_name + 3);
+    }
+    /* Try parsing as plain number */
+    return atoi(chrom_name);
+}
+
+/* Read founder VCF file (supports multiple chromosomes) */
 founder_vcf* read_founder_vcf(const char* filename)
 {
     FILE* fp = fopen(filename, "r");
@@ -14,7 +24,9 @@ founder_vcf* read_founder_vcf(const char* filename)
     fvcf->mutations = malloc(INITIAL_CAPACITY * sizeof(vcf_mutation));
     fvcf->n_mutations = 0;
     fvcf->capacity = INITIAL_CAPACITY;
-    fvcf->chrom_length = 0;
+    fvcf->n_chromosomes = 0;
+    fvcf->chrom_lengths = malloc(64 * sizeof(long));  /* Support up to 64 chromosomes */
+    memset(fvcf->chrom_lengths, 0, 64 * sizeof(long));
     fvcf->founder_names = NULL;
     fvcf->n_founder_samples = 0;
 
@@ -23,9 +35,20 @@ founder_vcf* read_founder_vcf(const char* filename)
     /* Parse header */
     while (fgets(line, sizeof(line), fp)) {
         if (strncmp(line, "##contig", 8) == 0) {
+            /* Parse chromosome ID and length: ##contig=<ID=chr1,length=10000000> */
+            char* id_ptr = strstr(line, "ID=");
             char* len_ptr = strstr(line, "length=");
-            if (len_ptr) {
-                fvcf->chrom_length = atol(len_ptr + 7);
+            if (id_ptr && len_ptr) {
+                char chrom_name[64];
+                sscanf(id_ptr + 3, "%[^,>]", chrom_name);
+                int chrom_id = parse_chrom_id(chrom_name);
+                long length = atol(len_ptr + 7);
+                if (chrom_id > 0 && chrom_id <= 64) {
+                    fvcf->chrom_lengths[chrom_id] = length;
+                    if (chrom_id > fvcf->n_chromosomes) {
+                        fvcf->n_chromosomes = chrom_id;
+                    }
+                }
             }
         }
         else if (line[0] == '#' && line[1] != '#') {
@@ -51,6 +74,11 @@ founder_vcf* read_founder_vcf(const char* filename)
         }
     }
 
+    /* Default to 1 chromosome if none found in header */
+    if (fvcf->n_chromosomes == 0) {
+        fvcf->n_chromosomes = 1;
+    }
+
     /* Parse mutation records */
     while (fgets(line, sizeof(line), fp)) {
         if (line[0] == '#') continue;
@@ -64,6 +92,7 @@ founder_vcf* read_founder_vcf(const char* filename)
         vcf_mutation* mut = &fvcf->mutations[fvcf->n_mutations];
         mut->n_founders = fvcf->n_founder_samples;
         mut->founder_geno = malloc(mut->n_founders * sizeof(int));
+        mut->chrom_id = 1;  /* Default */
 
         char* tok = strtok(line, "\t");
         int col = 0;
@@ -71,6 +100,9 @@ founder_vcf* read_founder_vcf(const char* filename)
 
         while (tok) {
             switch (col) {
+                case 0:
+                    mut->chrom_id = parse_chrom_id(tok);
+                    break;
                 case 1:
                     mut->position = atol(tok);
                     break;
@@ -111,6 +143,7 @@ void free_founder_vcf(founder_vcf* fvcf)
         free(fvcf->founder_names[i]);
     }
     free(fvcf->founder_names);
+    free(fvcf->chrom_lengths);
 
     free(fvcf);
 }
@@ -193,21 +226,34 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
     pts->chroms = malloc(INITIAL_CAPACITY * sizeof(sample_chrom));
     pts->n_chroms = 0;
     pts->capacity = INITIAL_CAPACITY;
+    pts->n_chromosomes = 1;  /* Default to 1 */
     pts->sample_names = malloc(INITIAL_CAPACITY * sizeof(char*));
     pts->n_samples = 0;
     pts->founder_map = fm;
 
     char line[MAX_LINE_LENGTH];
     char current_individual[MAX_NAME_LENGTH] = "";
+    int current_chrom_id = 1;
     int current_homolog = -1;
     sample_chrom* current = NULL;
     int sample_capacity = INITIAL_CAPACITY;
 
     while (fgets(line, sizeof(line), fp)) {
-        if (line[0] == '#' || line[0] == '\n') continue;
+        if (line[0] == '#') {
+            /* Check for chromosome count in header */
+            if (strncmp(line, "# Chromosomes:", 14) == 0) {
+                int n_chrom;
+                if (sscanf(line + 14, " %d", &n_chrom) == 1) {
+                    pts->n_chromosomes = n_chrom;
+                }
+            }
+            continue;
+        }
+        if (line[0] == '\n') continue;
 
         if (strncmp(line, "Individual:", 11) == 0) {
             sscanf(line + 11, " %s", current_individual);
+            current_chrom_id = 1;  /* Reset to first chromosome */
             current_homolog = -1;
 
             int found = 0;
@@ -232,6 +278,19 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
         char* trimmed = line;
         while (*trimmed == ' ') trimmed++;
 
+        /* Parse "Chromosome: N" lines */
+        if (strncmp(trimmed, "Chromosome:", 11) == 0) {
+            int chrom_num;
+            if (sscanf(trimmed + 11, " %d", &chrom_num) == 1) {
+                current_chrom_id = chrom_num;
+                if (chrom_num > pts->n_chromosomes) {
+                    pts->n_chromosomes = chrom_num;
+                }
+            }
+            current_homolog = -1;  /* Reset homolog for new chromosome */
+            continue;
+        }
+
         if (strncmp(trimmed, "Paternal:", 9) == 0) {
             current_homolog = 0;
 
@@ -243,6 +302,7 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
             current = &pts->chroms[pts->n_chroms];
             strncpy(current->name, current_individual, MAX_NAME_LENGTH - 1);
             current->name[MAX_NAME_LENGTH - 1] = '\0';
+            current->chrom_id = current_chrom_id;
             current->homolog = 0;
             current->segments = malloc(64 * sizeof(segment));
             current->n_segments = 0;
@@ -262,6 +322,7 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
             current = &pts->chroms[pts->n_chroms];
             strncpy(current->name, current_individual, MAX_NAME_LENGTH - 1);
             current->name[MAX_NAME_LENGTH - 1] = '\0';
+            current->chrom_id = current_chrom_id;
             current->homolog = 1;
             current->segments = malloc(64 * sizeof(segment));
             current->n_segments = 0;
@@ -332,28 +393,35 @@ int get_founder_haplotype_idx(founder_vcf* fvcf, const char* founder, int homolo
  * ============================================================================
  */
 
-/* Fast lookup table: sample_idx -> (paternal_chrom_idx, maternal_chrom_idx) */
+/*
+ * Fast lookup table for multi-chromosome support:
+ * entries[sample_idx * n_chromosomes + chrom_idx] -> (paternal_chrom_idx, maternal_chrom_idx)
+ */
 typedef struct {
     int pat_idx;  /* index into pts->chroms for paternal, or -1 */
     int mat_idx;  /* index into pts->chroms for maternal, or -1 */
 } sample_lookup_entry;
 
 typedef struct {
-    sample_lookup_entry* entries;  /* indexed by output sample index */
-    int n_entries;
+    sample_lookup_entry* entries;  /* indexed by: sample_idx * n_chromosomes + (chrom_id - 1) */
+    int n_samples;
+    int n_chromosomes;
 } sample_lookup_table;
 
-/* Build fast lookup table for samples */
+/* Build fast lookup table for samples (supports multiple chromosomes) */
 static sample_lookup_table* build_sample_lookup(pedtrans_segments* pts,
                                                   char** output_samples,
                                                   int n_output)
 {
+    int n_chromosomes = pts->n_chromosomes;
+
     sample_lookup_table* lut = malloc(sizeof(sample_lookup_table));
-    lut->entries = malloc(n_output * sizeof(sample_lookup_entry));
-    lut->n_entries = n_output;
+    lut->entries = malloc(n_output * n_chromosomes * sizeof(sample_lookup_entry));
+    lut->n_samples = n_output;
+    lut->n_chromosomes = n_chromosomes;
 
     /* Initialize all to -1 */
-    for (int i = 0; i < n_output; i++) {
+    for (int i = 0; i < n_output * n_chromosomes; i++) {
         lut->entries[i].pat_idx = -1;
         lut->entries[i].mat_idx = -1;
     }
@@ -361,14 +429,18 @@ static sample_lookup_table* build_sample_lookup(pedtrans_segments* pts,
     /* Build lookup by scanning chromosomes once */
     for (int c = 0; c < pts->n_chroms; c++) {
         sample_chrom* chr = &pts->chroms[c];
+        int chrom_idx = chr->chrom_id - 1;  /* 0-based index */
+
+        if (chrom_idx < 0 || chrom_idx >= n_chromosomes) continue;
 
         /* Find which output sample this belongs to */
         for (int s = 0; s < n_output; s++) {
             if (strcmp(output_samples[s], chr->name) == 0) {
+                int lut_idx = s * n_chromosomes + chrom_idx;
                 if (chr->homolog == 0) {
-                    lut->entries[s].pat_idx = c;
+                    lut->entries[lut_idx].pat_idx = c;
                 } else {
-                    lut->entries[s].mat_idx = c;
+                    lut->entries[lut_idx].mat_idx = c;
                 }
                 break;
             }
@@ -407,26 +479,31 @@ static inline int find_segment_binary(segment* segments, int n_segments, double 
     return -1;  /* Not found (gap in segments) */
 }
 
-/* Get VCF haplotype index using precomputed lookup table */
+/* Get VCF haplotype index using precomputed lookup table (multi-chromosome) */
 static inline int get_haplotype_fast(pedtrans_segments* pts,
                                       sample_lookup_table* lut,
-                                      int sample_idx, int homolog,
+                                      int sample_idx, int chrom_id, int homolog,
                                       double pos_frac)
 {
-    int chrom_idx;
+    int chrom_offset = chrom_id - 1;  /* Convert to 0-based */
+    if (chrom_offset < 0 || chrom_offset >= lut->n_chromosomes) return -1;
+
+    int lut_idx = sample_idx * lut->n_chromosomes + chrom_offset;
+    int pts_chrom_idx;
+
     if (homolog == 0) {
-        chrom_idx = lut->entries[sample_idx].pat_idx;
+        pts_chrom_idx = lut->entries[lut_idx].pat_idx;
     } else {
-        chrom_idx = lut->entries[sample_idx].mat_idx;
+        pts_chrom_idx = lut->entries[lut_idx].mat_idx;
     }
 
-    if (chrom_idx < 0) return -1;
+    if (pts_chrom_idx < 0) return -1;
 
-    sample_chrom* chr = &pts->chroms[chrom_idx];
+    sample_chrom* chr = &pts->chroms[pts_chrom_idx];
     return find_segment_binary(chr->segments, chr->n_segments, pos_frac);
 }
 
-/* Optimized assembly function */
+/* Optimized assembly function (supports multiple chromosomes) */
 int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
                         FILE* out, int samples_only)
 {
@@ -468,7 +545,14 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
     /* Write VCF header */
     fprintf(out, "##fileformat=VCFv4.2\n");
     fprintf(out, "##source=vcfassemble\n");
-    fprintf(out, "##contig=<ID=chr1,length=%ld>\n", fvcf->chrom_length);
+
+    /* Write contig lines for all chromosomes */
+    for (int c = 1; c <= fvcf->n_chromosomes; c++) {
+        long length = fvcf->chrom_lengths[c];
+        if (length == 0) length = 10000000;  /* Default length */
+        fprintf(out, "##contig=<ID=chr%d,length=%ld>\n", c, length);
+    }
+
     fprintf(out, "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n");
     fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
 
@@ -477,16 +561,20 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
     }
     fprintf(out, "\n");
 
-    /* Precompute inverse chromosome length */
-    double inv_chrom_length = 1.0 / (double)fvcf->chrom_length;
     int n_founders = fvcf->n_founder_samples;
 
     /* Process each mutation */
     int variants_written = 0;
     for (int m = 0; m < fvcf->n_mutations; m++) {
         vcf_mutation* mut = &fvcf->mutations[m];
+        int chrom_id = mut->chrom_id;
 
-        /* Convert position to fraction once per mutation */
+        /* Get chromosome length for position fraction calculation */
+        long chrom_length = fvcf->chrom_lengths[chrom_id];
+        if (chrom_length == 0) chrom_length = 10000000;
+        double inv_chrom_length = 1.0 / (double)chrom_length;
+
+        /* Convert position to fraction */
         double pos_frac = (double)mut->position * inv_chrom_length;
 
         /* Collect genotypes using fast lookup */
@@ -494,7 +582,7 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
 
         for (int s = 0; s < n_output; s++) {
             /* Paternal haplotype */
-            int vcf_idx = get_haplotype_fast(pts, lut, s, 0, pos_frac);
+            int vcf_idx = get_haplotype_fast(pts, lut, s, chrom_id, 0, pos_frac);
             if (vcf_idx >= 0 && vcf_idx < n_founders) {
                 geno[s * 2] = mut->founder_geno[vcf_idx];
                 if (geno[s * 2]) any_variant = 1;
@@ -503,7 +591,7 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
             }
 
             /* Maternal haplotype */
-            vcf_idx = get_haplotype_fast(pts, lut, s, 1, pos_frac);
+            vcf_idx = get_haplotype_fast(pts, lut, s, chrom_id, 1, pos_frac);
             if (vcf_idx >= 0 && vcf_idx < n_founders) {
                 geno[s * 2 + 1] = mut->founder_geno[vcf_idx];
                 if (geno[s * 2 + 1]) any_variant = 1;
@@ -514,8 +602,8 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
 
         /* Only output if at least one sample has the variant */
         if (any_variant) {
-            fprintf(out, "chr1\t%ld\t.\t%c\t%c\t.\tPASS\t.\tGT",
-                    mut->position, mut->ref, mut->alt);
+            fprintf(out, "chr%d\t%ld\t.\t%c\t%c\t.\tPASS\t.\tGT",
+                    chrom_id, mut->position, mut->ref, mut->alt);
 
             for (int s = 0; s < n_output; s++) {
                 fprintf(out, "\t%d|%d", geno[s * 2], geno[s * 2 + 1]);

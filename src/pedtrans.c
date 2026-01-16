@@ -622,6 +622,7 @@ ped_simulation* create_simulation(void) {
 
     sim->ped = NULL;
     sim->chromosomes = NULL;
+    sim->n_chromosomes = 1;
     sim->rec_rate = 1.0;
     sim->rng = NULL;
     sim->seed = 0;
@@ -633,7 +634,8 @@ void free_simulation(ped_simulation* sim) {
     if (!sim) return;
 
     if (sim->chromosomes && sim->ped) {
-        for (int i = 0; i < sim->ped->n_individuals; i++) {
+        int total = sim->ped->n_individuals * sim->n_chromosomes;
+        for (int i = 0; i < total; i++) {
             free_chromosome(sim->chromosomes[i].paternal);
             free_chromosome(sim->chromosomes[i].maternal);
         }
@@ -649,8 +651,8 @@ void free_simulation(ped_simulation* sim) {
     free(sim);
 }
 
-ped_simulation* simulate_pedigree(const char* ped_file, double rec_rate,
-                                   unsigned long seed) {
+ped_simulation* simulate_pedigree(const char* ped_file, int n_chromosomes,
+                                   double rec_rate, unsigned long seed) {
     ped_simulation* sim = create_simulation();
     if (!sim) return NULL;
 
@@ -661,6 +663,7 @@ ped_simulation* simulate_pedigree(const char* ped_file, double rec_rate,
         return NULL;
     }
 
+    sim->n_chromosomes = n_chromosomes;
     sim->rec_rate = rec_rate;
 
     /* Initialize RNG */
@@ -677,62 +680,68 @@ ped_simulation* simulate_pedigree(const char* ped_file, double rec_rate,
     sim->seed = seed;
     gsl_rng_set(sim->rng, seed);
 
-    /* Allocate chromosome arrays */
+    /* Allocate chromosome arrays: n_individuals * n_chromosomes */
     int n = sim->ped->n_individuals;
-    sim->chromosomes = calloc(n, sizeof(diploid_chromosomes));
+    sim->chromosomes = calloc(n * n_chromosomes, sizeof(diploid_chromosomes));
     if (!sim->chromosomes) {
         free_simulation(sim);
         return NULL;
     }
 
-    /* Track founder index for chromosome labeling */
-    int founder_idx = 0;
+    /* Simulate each chromosome independently */
+    for (int chr = 0; chr < n_chromosomes; chr++) {
+        /* Track founder index for chromosome labeling */
+        int founder_idx = 0;
 
-    /* Process individuals in topological order */
-    for (int i = 0; i < n; i++) {
-        int id = sim->ped->topo_order[i];
-        ped_indiv* indiv = &sim->ped->individuals[id];
+        /* Process individuals in topological order */
+        for (int i = 0; i < n; i++) {
+            int id = sim->ped->topo_order[i];
+            ped_indiv* indiv = &sim->ped->individuals[id];
+            int idx = id * n_chromosomes + chr;  /* Index into flat array */
 
-        if (indiv->is_founder) {
-            /* Founder: create unique chromosomes */
-            int pop_id = indiv->population_id;
-            sim->chromosomes[id].paternal = create_founder_chromosome_pop(founder_idx, 0, pop_id);
-            sim->chromosomes[id].maternal = create_founder_chromosome_pop(founder_idx, 1, pop_id);
-            if (!sim->chromosomes[id].paternal || !sim->chromosomes[id].maternal) {
-                free_simulation(sim);
-                return NULL;
-            }
-            founder_idx++;
-        } else {
-            /* Non-founder: perform meiosis from each parent */
-            int fid = indiv->father_id;
-            int mid = indiv->mother_id;
-
-            /* Paternal chromosome from father's meiosis */
-            if (fid >= 0) {
-                sim->chromosomes[id].paternal = meiosis(
-                    sim->chromosomes[fid].paternal,
-                    sim->chromosomes[fid].maternal,
-                    rec_rate, sim->rng);
+            if (indiv->is_founder) {
+                /* Founder: create unique chromosomes */
+                int pop_id = indiv->population_id;
+                sim->chromosomes[idx].paternal = create_founder_chromosome_pop(founder_idx, 0, pop_id);
+                sim->chromosomes[idx].maternal = create_founder_chromosome_pop(founder_idx, 1, pop_id);
+                if (!sim->chromosomes[idx].paternal || !sim->chromosomes[idx].maternal) {
+                    free_simulation(sim);
+                    return NULL;
+                }
+                founder_idx++;
             } else {
-                /* Father unknown - shouldn't happen in valid pedigree */
-                sim->chromosomes[id].paternal = NULL;
-            }
+                /* Non-founder: perform meiosis from each parent */
+                int fid = indiv->father_id;
+                int mid = indiv->mother_id;
+                int fidx = fid * n_chromosomes + chr;
+                int midx = mid * n_chromosomes + chr;
 
-            /* Maternal chromosome from mother's meiosis */
-            if (mid >= 0) {
-                sim->chromosomes[id].maternal = meiosis(
-                    sim->chromosomes[mid].paternal,
-                    sim->chromosomes[mid].maternal,
-                    rec_rate, sim->rng);
-            } else {
-                /* Mother unknown - shouldn't happen in valid pedigree */
-                sim->chromosomes[id].maternal = NULL;
-            }
+                /* Paternal chromosome from father's meiosis */
+                if (fid >= 0) {
+                    sim->chromosomes[idx].paternal = meiosis(
+                        sim->chromosomes[fidx].paternal,
+                        sim->chromosomes[fidx].maternal,
+                        rec_rate, sim->rng);
+                } else {
+                    /* Father unknown - shouldn't happen in valid pedigree */
+                    sim->chromosomes[idx].paternal = NULL;
+                }
 
-            if (!sim->chromosomes[id].paternal || !sim->chromosomes[id].maternal) {
-                free_simulation(sim);
-                return NULL;
+                /* Maternal chromosome from mother's meiosis */
+                if (mid >= 0) {
+                    sim->chromosomes[idx].maternal = meiosis(
+                        sim->chromosomes[midx].paternal,
+                        sim->chromosomes[midx].maternal,
+                        rec_rate, sim->rng);
+                } else {
+                    /* Mother unknown - shouldn't happen in valid pedigree */
+                    sim->chromosomes[idx].maternal = NULL;
+                }
+
+                if (!sim->chromosomes[idx].paternal || !sim->chromosomes[idx].maternal) {
+                    free_simulation(sim);
+                    return NULL;
+                }
             }
         }
     }
@@ -787,18 +796,26 @@ void print_individual_segments(ped_simulation* sim, int indiv_id, FILE* out) {
     const char* name = pedigree_get_name(sim->ped, indiv_id);
     fprintf(out, "Individual: %s\n", name ? name : "(unknown)");
 
-    diploid_chromosomes* chr = &sim->chromosomes[indiv_id];
-    if (chr->paternal) {
-        print_chromosome(sim, chr->paternal, "Paternal", out);
-    }
-    if (chr->maternal) {
-        print_chromosome(sim, chr->maternal, "Maternal", out);
+    for (int c = 0; c < sim->n_chromosomes; c++) {
+        int idx = indiv_id * sim->n_chromosomes + c;
+        diploid_chromosomes* chr = &sim->chromosomes[idx];
+
+        /* Always output chromosome number for multi-chromosome support */
+        fprintf(out, "  Chromosome: %d\n", c + 1);
+
+        if (chr->paternal) {
+            print_chromosome(sim, chr->paternal, "  Paternal", out);
+        }
+        if (chr->maternal) {
+            print_chromosome(sim, chr->maternal, "  Maternal", out);
+        }
     }
 }
 
 void print_simulation_header(ped_simulation* sim, FILE* out) {
     fprintf(out, "# pedtrans output\n");
-    fprintf(out, "# RecRate: %.6f Seed: %lu\n", sim->rec_rate, sim->seed);
+    fprintf(out, "# Chromosomes: %d RecRate: %.6f Seed: %lu\n",
+            sim->n_chromosomes, sim->rec_rate, sim->seed);
     fprintf(out, "# Individuals: %d Founders: %d\n",
             sim->ped->n_individuals, sim->ped->n_founders);
 

@@ -466,79 +466,87 @@ int multipop_simulate(multipop_pedigree* ped) {
             for (int i = 0; i < prev_gen->n_males; i++) {
                 int child_id = prev_gen->male_ids[i];
 
-                /* Sample source population for parents */
-                int src_pop = sample_parent_population(ped->rng, ped->migration,
-                                                        n_pops, p);
-                int is_migrant = (src_pop != p) ? 1 : 0;
+                /* Sample source population INDEPENDENTLY for each parent */
+                int father_src_pop = sample_parent_population(ped->rng, ped->migration,
+                                                               n_pops, p);
+                int mother_src_pop = sample_parent_population(ped->rng, ped->migration,
+                                                               n_pops, p);
+
+                /* Mark as migrant if either parent is from a different population */
+                int is_migrant = (father_src_pop != p || mother_src_pop != p) ? 1 : 0;
                 ped->individuals[child_id].is_migrant = is_migrant;
 
-                int n_males_src = ped->populations[src_pop].pop_size / 2;
-                int n_females_src = ped->populations[src_pop].pop_size / 2;
+                int n_males_father_src = ped->populations[father_src_pop].pop_size / 2;
+                int n_females_mother_src = ped->populations[mother_src_pop].pop_size / 2;
 
-                /* Draw father and mother from source population */
-                int f_pop = gsl_rng_uniform_int(ped->rng, n_males_src);
-                int m_pop = gsl_rng_uniform_int(ped->rng, n_females_src);
+                /* Draw father and mother from their respective source populations */
+                int f_idx = gsl_rng_uniform_int(ped->rng, n_males_father_src);
+                int m_idx = gsl_rng_uniform_int(ped->rng, n_females_mother_src);
 
-                /* Get or create father */
-                if (parent_map[src_pop][0][f_pop] < 0) {
-                    int father_id = add_individual(ped, t, 0, -1, -1, src_pop,
+                /* Get or create father from father's source population */
+                if (parent_map[father_src_pop][0][f_idx] < 0) {
+                    int father_id = add_individual(ped, t, 0, -1, -1, father_src_pop,
                                                     is_founder, 0);
                     if (father_id < 0) goto cleanup_error;
-                    parent_map[src_pop][0][f_pop] = father_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[src_pop],
+                    parent_map[father_src_pop][0][f_idx] = father_id;
+                    add_to_generation(ped->gens_by_pop[t]->generations[father_src_pop],
                                       father_id, 0);
                 }
-                ped->individuals[child_id].father_id = parent_map[src_pop][0][f_pop];
+                ped->individuals[child_id].father_id = parent_map[father_src_pop][0][f_idx];
 
-                /* Get or create mother */
-                if (parent_map[src_pop][1][m_pop] < 0) {
-                    int mother_id = add_individual(ped, t, 1, -1, -1, src_pop,
+                /* Get or create mother from mother's source population */
+                if (parent_map[mother_src_pop][1][m_idx] < 0) {
+                    int mother_id = add_individual(ped, t, 1, -1, -1, mother_src_pop,
                                                     is_founder, 0);
                     if (mother_id < 0) goto cleanup_error;
-                    parent_map[src_pop][1][m_pop] = mother_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[src_pop],
+                    parent_map[mother_src_pop][1][m_idx] = mother_id;
+                    add_to_generation(ped->gens_by_pop[t]->generations[mother_src_pop],
                                       mother_id, 1);
                 }
-                ped->individuals[child_id].mother_id = parent_map[src_pop][1][m_pop];
+                ped->individuals[child_id].mother_id = parent_map[mother_src_pop][1][m_idx];
             }
 
             for (int i = 0; i < prev_gen->n_females; i++) {
                 int child_id = prev_gen->female_ids[i];
 
-                /* Sample source population for parents */
-                int src_pop = sample_parent_population(ped->rng, ped->migration,
-                                                        n_pops, p);
-                int is_migrant = (src_pop != p) ? 1 : 0;
+                /* Sample source population INDEPENDENTLY for each parent */
+                int father_src_pop = sample_parent_population(ped->rng, ped->migration,
+                                                               n_pops, p);
+                int mother_src_pop = sample_parent_population(ped->rng, ped->migration,
+                                                               n_pops, p);
+
+                /* Mark as migrant if either parent is from a different population */
+                int is_migrant = (father_src_pop != p || mother_src_pop != p) ? 1 : 0;
                 ped->individuals[child_id].is_migrant = is_migrant;
 
-                int n_males_src = ped->populations[src_pop].pop_size / 2;
-                int n_females_src = ped->populations[src_pop].pop_size / 2;
+                int n_males_father_src = ped->populations[father_src_pop].pop_size / 2;
+                int n_females_mother_src = ped->populations[mother_src_pop].pop_size / 2;
 
-                /* Draw father and mother from source population */
-                int f_pop = gsl_rng_uniform_int(ped->rng, n_males_src);
-                int m_pop = gsl_rng_uniform_int(ped->rng, n_females_src);
+                /* Draw father and mother from their respective source populations */
+                int f_idx = gsl_rng_uniform_int(ped->rng, n_males_father_src);
+                int m_idx = gsl_rng_uniform_int(ped->rng, n_females_mother_src);
 
-                /* Get or create father */
-                if (parent_map[src_pop][0][f_pop] < 0) {
-                    int father_id = add_individual(ped, t, 0, -1, -1, src_pop,
+                /* Get or create father from father's source population */
+                if (parent_map[father_src_pop][0][f_idx] < 0) {
+                    int father_id = add_individual(ped, t, 0, -1, -1, father_src_pop,
                                                     is_founder, 0);
                     if (father_id < 0) goto cleanup_error;
-                    parent_map[src_pop][0][f_pop] = father_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[src_pop],
+                    parent_map[father_src_pop][0][f_idx] = father_id;
+                    add_to_generation(ped->gens_by_pop[t]->generations[father_src_pop],
                                       father_id, 0);
                 }
-                ped->individuals[child_id].father_id = parent_map[src_pop][0][f_pop];
+                ped->individuals[child_id].father_id = parent_map[father_src_pop][0][f_idx];
 
-                /* Get or create mother */
-                if (parent_map[src_pop][1][m_pop] < 0) {
-                    int mother_id = add_individual(ped, t, 1, -1, -1, src_pop,
+                /* Get or create mother from mother's source population */
+                if (parent_map[mother_src_pop][1][m_idx] < 0) {
+                    int mother_id = add_individual(ped, t, 1, -1, -1, mother_src_pop,
                                                     is_founder, 0);
                     if (mother_id < 0) goto cleanup_error;
-                    parent_map[src_pop][1][m_pop] = mother_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[src_pop],
+                    parent_map[mother_src_pop][1][m_idx] = mother_id;
+                    add_to_generation(ped->gens_by_pop[t]->generations[mother_src_pop],
                                       mother_id, 1);
                 }
-                ped->individuals[child_id].mother_id = parent_map[src_pop][1][m_pop];
+                ped->individuals[child_id].mother_id = parent_map[mother_src_pop][1][m_idx];
             }
         }
     }
