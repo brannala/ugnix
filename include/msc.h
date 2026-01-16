@@ -19,13 +19,13 @@
 /*
  * A single migration band between two populations.
  * Migration is specified going backwards in time: a lineage in to_pop
- * migrates to from_pop at rate M/2 per lineage.
+ * migrates to from_pop at rate m per lineage per generation.
  * Going forward in time, this represents individuals moving from from_pop to to_pop.
  */
 typedef struct {
     int from_pop;           /* Source population ID (backwards: destination) */
     int to_pop;             /* Dest population ID (backwards: source of lineage) */
-    double M;               /* Migration rate M = 4Nm */
+    double m;               /* Migration rate per lineage per generation */
 } migration_band;
 
 /*
@@ -44,17 +44,25 @@ typedef struct {
     double mutation_rate;            /* Mutation rate (optional, for seq output) */
     unsigned long seed;              /* RNG seed (0 for time-based) */
 
+    /* Batch mode */
+    int nreps;                       /* Number of replicates (default 1) */
+
     /* Output options */
     int output_gene_trees;           /* Print gene trees in Newick format */
     int output_vcf;                  /* Generate VCF output */
     char* vcf_filename;              /* VCF output filename */
+    int output_tmrca;                /* Output TMRCA like ms -L flag */
     int verbose;                     /* Verbose output */
+    int quiet;                       /* Suppress per-replicate output */
 
     /* Derived parameters (computed after parsing) */
     int total_samples;               /* Sum of sample sizes across species */
 
     /* Migration parameters */
     migration_band_list* migrations; /* Migration bands (NULL if no migration) */
+
+    /* Optimization flags (computed after parsing) */
+    int single_population;           /* True if n_tips==1 and no migration (fast path) */
 } msc_params;
 
 /* ============== Control File Parsing ============== */
@@ -134,8 +142,8 @@ chrsample* msc_create_sample(species_tree* tree, int total_samples);
 
 /*
  * Calculate event rates for MSC simulation.
- * Per-population coalescence: n_p(n_p-1)/(2*theta_p)
- * Per-band migration: n_to * M / 2
+ * Per-population coalescence: n_p(n_p-1)/(4*N_p) where N_p is diploid pop size
+ * Per-band migration: n_to * m (m = per-lineage migration rate)
  */
 msc_rates* msc_calculate_rates(chrsample* sample, species_tree* tree,
                                 msc_params* params, double current_time,
@@ -168,10 +176,29 @@ int msc_get_coal_pair_in_pop(gsl_rng* r, chrsample* sample,
 void msc_process_divergence(chrsample* sample, divergence_event* event);
 
 /*
- * Run MSC simulation.
+ * Result of a single MSC simulation replicate.
+ */
+typedef struct {
+    double tmrca;                    /* Time to most recent common ancestor */
+    double total_tree_length;        /* Total tree length (sum of all branches) */
+    int n_coalescences;              /* Number of coalescence events */
+    int n_migrations;                /* Number of migration events */
+    int n_recombinations;            /* Number of recombination events */
+    int n_mutations;                 /* Number of mutation events */
+} msc_result;
+
+/*
+ * Run MSC simulation (batch mode - runs nreps replicates).
  * Returns 0 on success, -1 on error.
  */
 int msc_simulate(msc_params* params);
+
+/*
+ * Run a single MSC simulation replicate.
+ * Returns result in 'result' parameter.
+ * Returns 0 on success, -1 on error.
+ */
+int msc_simulate_single(msc_params* params, gsl_rng* r, msc_result* result);
 
 /* ============== Utility Functions ============== */
 

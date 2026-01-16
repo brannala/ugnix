@@ -134,7 +134,7 @@ static int parse_migrations(const char* str, msc_params* params) {
     }
     params->migrations->n_bands = 0;
 
-    /* Parse each band: "source->dest:M" */
+    /* Parse each band: "source->dest:m" where m is per-lineage migration rate */
     char* token = strtok(copy, ",");
     while (token) {
         token = trim(token);
@@ -142,7 +142,7 @@ static int parse_migrations(const char* str, msc_params* params) {
         /* Find "->" separator */
         char* arrow = strstr(token, "->");
         if (!arrow) {
-            fprintf(stderr, "Error: Invalid migration format '%s', expected 'source->dest:M'\n", token);
+            fprintf(stderr, "Error: Invalid migration format '%s', expected 'source->dest:m'\n", token);
             free(copy);
             return -1;
         }
@@ -160,9 +160,9 @@ static int parse_migrations(const char* str, msc_params* params) {
         *colon = '\0';
         char* source_name = trim(token);
         char* dest_name = trim(arrow + 2);
-        double M = atof(colon + 1);
+        double m = atof(colon + 1);
 
-        if (M < 0) {
+        if (m < 0) {
             fprintf(stderr, "Error: Negative migration rate for %s->%s\n", source_name, dest_name);
             free(copy);
             return -1;
@@ -193,7 +193,7 @@ static int parse_migrations(const char* str, msc_params* params) {
         migration_band* band = &params->migrations->bands[params->migrations->n_bands];
         band->from_pop = source->id;
         band->to_pop = dest->id;
-        band->M = M;
+        band->m = m;
         params->migrations->n_bands++;
 
         token = strtok(NULL, ",");
@@ -220,10 +220,13 @@ msc_params* msc_parse_control_file(const char* filename) {
     params->recombination_rate = 0.0;
     params->mutation_rate = 0.0;
     params->seed = 0;
+    params->nreps = 1;
     params->output_gene_trees = 0;
     params->output_vcf = 0;
     params->vcf_filename = NULL;
+    params->output_tmrca = 0;
     params->verbose = 0;
+    params->quiet = 0;
     params->migrations = NULL;
 
     char line[4096];
@@ -285,6 +288,18 @@ msc_params* msc_parse_control_file(const char* filename) {
         else if (parse_key_value(trimmed, "verbose", &value)) {
             params->verbose = parse_bool(trim(value));
         }
+        else if (parse_key_value(trimmed, "replicates", &value)) {
+            params->nreps = atoi(trim(value));
+            if (params->nreps <= 0) {
+                fprintf(stderr, "Error: replicates must be positive (line %d)\n", line_num);
+                msc_free_params(params);
+                fclose(f);
+                return NULL;
+            }
+        }
+        else if (parse_key_value(trimmed, "output_tmrca", &value)) {
+            params->output_tmrca = parse_bool(trim(value));
+        }
         else if (parse_key_value(trimmed, "migration", &value)) {
             if (!params->tree) {
                 fprintf(stderr, "Error: 'migration' must come after 'species_tree' (line %d)\n", line_num);
@@ -309,6 +324,13 @@ msc_params* msc_parse_control_file(const char* filename) {
     if (params->tree) {
         species_tree_compute_divergence_times(params->tree);
         params->total_samples = species_tree_total_samples(params->tree);
+
+        /* Check for single-population fast path:
+         * - Only one tip (species)
+         * - No migration bands
+         * This allows us to skip all population tracking overhead. */
+        params->single_population = (params->tree->n_tips == 1) &&
+                                    (!params->migrations || params->migrations->n_bands == 0);
     }
 
     return params;
@@ -339,10 +361,10 @@ int msc_validate_params(msc_params* params) {
         }
     }
 
-    /* Check all nodes have theta values */
+    /* Check all nodes have population sizes */
     for (int i = 0; i < params->tree->n_nodes; i++) {
-        if (params->tree->nodes[i]->theta <= 0) {
-            fprintf(stderr, "Error: Invalid or missing theta for node %d\n",
+        if (params->tree->nodes[i]->N <= 0) {
+            fprintf(stderr, "Error: Invalid or missing population size N for node %d\n",
                     params->tree->nodes[i]->id);
             return -1;
         }
@@ -445,8 +467,8 @@ msc_rates* msc_calculate_rates(chrsample* sample, species_tree* tree,
         int n = node->active_lineages;
 
         if (n >= 2) {
-            /* Coalescence rate = n(n-1) / (2 * theta) */
-            double coal_rate = (double)n * (n - 1) / (2.0 * node->theta);
+            /* Coalescence rate = n(n-1) / (4N) for diploid population size N */
+            double coal_rate = (double)n * (n - 1) / (4.0 * node->N);
 
             rates->pop_rates[rates->n_active_pops].pop_id = node->id;
             rates->pop_rates[rates->n_active_pops].n_lineages = n;
@@ -479,7 +501,7 @@ msc_rates* msc_calculate_rates(chrsample* sample, species_tree* tree,
 
             /* Only add if destination has lineages AND both pops are contemporary */
             if (n_to > 0 && populations_contemporary(tree, band->from_pop, band->to_pop, current_time)) {
-                double mig_rate = n_to * band->M / 2.0;
+                double mig_rate = n_to * band->m;  /* m = per-lineage migration rate */
                 rates->mig_rates[rates->n_mig_pairs].from_pop = band->from_pop;
                 rates->mig_rates[rates->n_mig_pairs].to_pop = band->to_pop;
                 rates->mig_rates[rates->n_mig_pairs].rate = mig_rate;
@@ -704,13 +726,13 @@ void msc_free_migrations(migration_band_list* migrations) {
 
 /* ============== Main Simulation ============== */
 
-int msc_simulate(msc_params* params) {
-    /* Initialize RNG */
-    gsl_rng* r = gsl_rng_alloc(gsl_rng_mt19937);
-    if (params->seed == 0) {
-        params->seed = (unsigned long)time(NULL);
-    }
-    gsl_rng_set(r, params->seed);
+/*
+ * Fast-path simulation for single population (no species tree overhead).
+ * Uses O(1) rate calculation like original coalsim.
+ */
+static int msc_simulate_single_pop_fast(msc_params* params, gsl_rng* r, msc_result* result) {
+    /* Get population size from the single tip */
+    double popSize = params->tree->tips[0]->N;
 
     /* Set global sample size for bitarray allocation */
     g_noSamples = params->total_samples;
@@ -721,12 +743,175 @@ int msc_simulate(msc_params* params) {
     /* Create MRCA bitarray (all bits set) */
     bitarray* mrca = bitarray_full(params->total_samples);
 
+    /* Create initial sample (simplified - no population tracking needed) */
+    chrsample* sample = malloc(sizeof(chrsample));
+    if (!sample) {
+        bitarray_free(mrca);
+        return -1;
+    }
+    sample->capacity = params->total_samples * 4;
+    sample->chrs = malloc(sample->capacity * sizeof(chromosome*));
+    if (!sample->chrs) {
+        free(sample);
+        bitarray_free(mrca);
+        return -1;
+    }
+    sample->count = 0;
+    sample->ancLength = (double)params->total_samples;
+    sample->activeAncLength = (double)params->total_samples;
+    sample->activeAncValid = 0;
+
+    for (int i = 0; i < params->total_samples; i++) {
+        chromosome* chr = malloc(sizeof(chromosome));
+        if (!chr) {
+            delete_sample(sample);
+            bitarray_free(mrca);
+            return -1;
+        }
+        chr->anc = calloc(1, sizeof(ancestry));
+        chr->anc->abits = bitarray_singleton(params->total_samples, i);
+        chr->anc->position = 1.0;
+        chr->anc->next = NULL;
+        chr->anc->is_mrca = 0;
+        chr->ancLen = 1.0;
+        chr->activeLen = 1.0;
+        chr->activeLenValid = 0;
+        chr->population_id = 0;  /* Not used in fast path */
+        sample->chrs[sample->count++] = chr;
+    }
+
+    /* Simulation variables */
+    double current_time = 0;
+    unsigned int n_chrom = sample->count;
+    int n_coalescences = 0;
+    int n_recombinations = 0;
+    int n_mutations = 0;
+
+    /* Data structures for output */
+    mutation* mutation_list = NULL;
+    mutation* mutation_list_tail = NULL;
+
+    /* Main simulation loop - O(1) rate calculation like original coalsim */
+    while (n_chrom > 1) {
+        /* O(1) rate calculation - the key optimization */
+        double ancLength = getActiveAncLength(sample, mrca);
+        double coal_rate = (n_chrom * (n_chrom - 1) / 2.0) * (1.0 / (2.0 * popSize));
+        double rec_rate = params->recombination_rate * ancLength;
+        double mut_rate = params->mutation_rate * ancLength;
+        double total_rate = coal_rate + rec_rate + mut_rate;
+
+        if (total_rate <= 0) break;
+
+        /* Time to next event */
+        double dt = gsl_ran_exponential(r, 1.0 / total_rate);
+        current_time += dt;
+
+        /* Determine event type */
+        double u = gsl_rng_uniform_pos(r) * total_rate;
+
+        if (u < coal_rate) {
+            /* Coalescence event - simple random pair selection */
+            int i1 = gsl_rng_uniform_int(r, n_chrom);
+            int i2 = gsl_rng_uniform_int(r, n_chrom - 1);
+            if (i2 >= i1) i2++;
+
+            coalescent_pair pair = {i1, i2};
+            coalescence(pair, &n_chrom, sample, mrca);
+            n_coalescences++;
+            /* Note: coalescence() calls updateActiveAncLengthCoal() internally,
+             * so no need to invalidate cache here */
+        }
+        else if (u < coal_rate + rec_rate) {
+            /* Recombination event */
+            double rec_pos = (u - coal_rate) / params->recombination_rate;
+            recombination_event recEv;
+            getRecEventActive(sample, rec_pos, &recEv, mrca);
+            recombination(&n_chrom, recEv, sample);
+            n_recombinations++;
+        }
+        else {
+            /* Mutation event */
+            double mut_pos = (u - coal_rate - rec_rate) / params->mutation_rate;
+            mutation* mutEv = malloc(sizeof(mutation));
+            getMutEventActive(sample, mut_pos, mutEv, current_time, mrca);
+            mutEv->next = NULL;
+            if (!mutation_list) {
+                mutation_list = mutEv;
+                mutation_list_tail = mutEv;
+            } else {
+                mutation_list_tail->next = mutEv;
+                mutation_list_tail = mutEv;
+            }
+            n_mutations++;
+        }
+    }
+
+    /* Store results */
+    if (result) {
+        result->tmrca = current_time;
+        result->total_tree_length = 0;
+        result->n_coalescences = n_coalescences;
+        result->n_migrations = 0;
+        result->n_recombinations = n_recombinations;
+        result->n_mutations = n_mutations;
+    }
+
+    /* Output VCF if requested */
+    if (params->output_vcf && params->vcf_filename && params->nreps == 1) {
+        FILE* vcf_out = fopen(params->vcf_filename, "w");
+        if (vcf_out) {
+            long chrom_bases = 1000000;
+            writeVCF(mutation_list, chrom_bases, params->total_samples, mrca, vcf_out, r);
+            fclose(vcf_out);
+        }
+    }
+
+    /* Cleanup */
+    delete_sample(sample);
+    bitarray_free(mrca);
+
+    /* Free mutation list */
+    mutation* mut = mutation_list;
+    while (mut) {
+        mutation* next = mut->next;
+        if (mut->abits) bitarray_free(mut->abits);
+        free(mut);
+        mut = next;
+    }
+
+    return 0;
+}
+
+/*
+ * Run a single MSC simulation replicate.
+ * The RNG is passed in so multiple replicates share the same RNG state.
+ * Returns 0 on success, -1 on error.
+ */
+int msc_simulate_single(msc_params* params, gsl_rng* r, msc_result* result) {
+    /* Use fast path for single-population simulations */
+    if (params->single_population) {
+        return msc_simulate_single_pop_fast(params, r, result);
+    }
+
+    /* Set global sample size for bitarray allocation */
+    g_noSamples = params->total_samples;
+
+    /* Initialize bitarray pool (will reuse if already initialized) */
+    bitarray_pool_init(params->total_samples);
+
+    /* Create MRCA bitarray (all bits set) */
+    bitarray* mrca = bitarray_full(params->total_samples);
+
+    /* Reset species tree lineage counts and re-create sample */
+    for (int i = 0; i < params->tree->n_nodes; i++) {
+        params->tree->nodes[i]->active_lineages = 0;
+    }
+
     /* Create initial sample */
     chrsample* sample = msc_create_sample(params->tree, params->total_samples);
     if (!sample) {
         fprintf(stderr, "Error: Failed to create sample\n");
         bitarray_free(mrca);
-        gsl_rng_free(r);
         return -1;
     }
 
@@ -746,19 +931,6 @@ int msc_simulate(msc_params* params) {
     int n_mutations = 0;
     int n_coalescences = 0;
     int n_migrations = 0;
-
-    if (params->verbose) {
-        fprintf(stderr, "Starting MSC simulation:\n");
-        fprintf(stderr, "  Total samples: %d\n", params->total_samples);
-        fprintf(stderr, "  Species: %d\n", params->tree->n_tips);
-        fprintf(stderr, "  Recombination rate: %.4f\n", params->recombination_rate);
-        fprintf(stderr, "  Mutation rate: %.4f\n", params->mutation_rate);
-        if (params->migrations) {
-            fprintf(stderr, "  Migration bands: %d\n", params->migrations->n_bands);
-        }
-        fprintf(stderr, "  Seed: %lu\n", params->seed);
-        species_tree_print(params->tree, stderr);
-    }
 
     /* Main simulation loop */
     while (n_chrom > 1) {
@@ -889,31 +1061,29 @@ int msc_simulate(msc_params* params) {
         }
 
         msc_free_rates(rates);
-
-        /* In MSC, we don't check for MRCA early termination because
-         * populations are isolated until divergence times. The loop
-         * terminates when n_chrom == 1 (all lineages coalesced) or
-         * when total_rate == 0 (only MRCA segments remain within
-         * isolated populations that can't coalesce further). */
     }
 
-    /* Print summary */
-    printf("MSC Simulation Complete:\n");
-    printf("  Coalescences: %d\n", n_coalescences);
-    printf("  Migrations: %d\n", n_migrations);
-    printf("  Recombinations: %d\n", n_recombinations);
-    printf("  Mutations: %d\n", n_mutations);
-    printf("  Final time: %.2f generations\n", current_time);
+    /* Store results */
+    if (result) {
+        result->tmrca = current_time;
+        result->total_tree_length = 0;  /* TODO: compute from coalescent events if needed */
+        result->n_coalescences = n_coalescences;
+        result->n_migrations = n_migrations;
+        result->n_recombinations = n_recombinations;
+        result->n_mutations = n_mutations;
+    }
 
-    /* Output VCF if requested */
-    if (params->output_vcf && params->vcf_filename) {
+    /* Output VCF if requested (only for single replicate mode) */
+    if (params->output_vcf && params->vcf_filename && params->nreps == 1) {
         FILE* vcf_out = fopen(params->vcf_filename, "w");
         if (vcf_out) {
             /* Assume 1Mb chromosome for now - this should be configurable */
             long chrom_bases = 1000000;
             writeVCF(mutation_list, chrom_bases, params->total_samples, mrca, vcf_out, r);
             fclose(vcf_out);
-            printf("  VCF written to: %s\n", params->vcf_filename);
+            if (!params->quiet) {
+                printf("  VCF written to: %s\n", params->vcf_filename);
+            }
         } else {
             fprintf(stderr, "Warning: Could not open VCF file '%s'\n", params->vcf_filename);
         }
@@ -922,7 +1092,6 @@ int msc_simulate(msc_params* params) {
     /* Cleanup */
     delete_sample(sample);
     bitarray_free(mrca);
-    gsl_rng_free(r);
     if (div_events) divergence_event_list_free(div_events);
 
     /* Free mutation list */
@@ -938,11 +1107,88 @@ int msc_simulate(msc_params* params) {
     struct coalescent_events* ce = coalescent_list;
     while (ce) {
         struct coalescent_events* next = ce->next;
-        /* Note: chr is owned by sample, already freed */
         free(ce);
         ce = next;
     }
 
+    return 0;
+}
+
+/*
+ * Run MSC simulation with batch mode support.
+ * Runs params->nreps replicates.
+ */
+int msc_simulate(msc_params* params) {
+    /* Initialize RNG */
+    gsl_rng* r = gsl_rng_alloc(gsl_rng_mt19937);
+    if (params->seed == 0) {
+        params->seed = (unsigned long)time(NULL);
+    }
+    gsl_rng_set(r, params->seed);
+
+    if (params->verbose) {
+        fprintf(stderr, "Starting MSC simulation:\n");
+        fprintf(stderr, "  Total samples: %d\n", params->total_samples);
+        fprintf(stderr, "  Species: %d\n", params->tree->n_tips);
+        fprintf(stderr, "  Recombination rate: %.4f\n", params->recombination_rate);
+        fprintf(stderr, "  Mutation rate: %.4f\n", params->mutation_rate);
+        if (params->migrations) {
+            fprintf(stderr, "  Migration bands: %d\n", params->migrations->n_bands);
+        }
+        fprintf(stderr, "  Replicates: %d\n", params->nreps);
+        fprintf(stderr, "  Seed: %lu\n", params->seed);
+        species_tree_print(params->tree, stderr);
+    }
+
+    /* Accumulators for summary statistics */
+    int total_coal = 0, total_mig = 0, total_rec = 0, total_mut = 0;
+    double sum_tmrca = 0;
+
+    /* Run replicates */
+    for (int rep = 0; rep < params->nreps; rep++) {
+        msc_result result;
+        memset(&result, 0, sizeof(result));
+
+        if (msc_simulate_single(params, r, &result) < 0) {
+            gsl_rng_free(r);
+            bitarray_pool_destroy();
+            return -1;
+        }
+
+        /* Output TMRCA if requested (like ms -L) */
+        if (params->output_tmrca) {
+            printf("time:\t%.6f\t%.6f\n", result.tmrca, result.total_tree_length);
+        }
+
+        /* Accumulate statistics */
+        total_coal += result.n_coalescences;
+        total_mig += result.n_migrations;
+        total_rec += result.n_recombinations;
+        total_mut += result.n_mutations;
+        sum_tmrca += result.tmrca;
+    }
+
+    /* Print summary (unless quiet or using TMRCA output mode) */
+    if (!params->quiet && !params->output_tmrca) {
+        if (params->nreps == 1) {
+            printf("MSC Simulation Complete:\n");
+            printf("  Coalescences: %d\n", total_coal);
+            printf("  Migrations: %d\n", total_mig);
+            printf("  Recombinations: %d\n", total_rec);
+            printf("  Mutations: %d\n", total_mut);
+            printf("  Final time: %.2f generations\n", sum_tmrca);
+        } else {
+            printf("MSC Simulation Complete (%d replicates):\n", params->nreps);
+            printf("  Total coalescences: %d (avg %.1f/rep)\n", total_coal, (double)total_coal / params->nreps);
+            printf("  Total migrations: %d (avg %.1f/rep)\n", total_mig, (double)total_mig / params->nreps);
+            printf("  Total recombinations: %d (avg %.1f/rep)\n", total_rec, (double)total_rec / params->nreps);
+            printf("  Total mutations: %d (avg %.1f/rep)\n", total_mut, (double)total_mut / params->nreps);
+            printf("  Mean TMRCA: %.2f generations\n", sum_tmrca / params->nreps);
+        }
+    }
+
+    /* Cleanup */
+    gsl_rng_free(r);
     bitarray_pool_destroy();
 
     return 0;
