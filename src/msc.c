@@ -22,6 +22,10 @@
 /* Global sample size for bitarray allocation (from coalescent.c) */
 extern int g_noSamples;
 
+/* Forward declarations for migration helpers */
+static species_node* find_node_by_id(species_tree* tree, int id);
+static int populations_contemporary(species_tree* tree, int pop1_id, int pop2_id, double current_time);
+
 /* ============== Control File Parsing ============== */
 
 /* Trim leading/trailing whitespace in place */
@@ -98,6 +102,107 @@ static int parse_bool(const char* str) {
     return 0;
 }
 
+/*
+ * Parse migration specification: "A->B:0.5,B->A:0.3,AB->C:0.1,..."
+ * Returns 0 on success, -1 on error.
+ */
+static int parse_migrations(const char* str, msc_params* params) {
+    if (!str || !*str) return 0;  /* No migration is okay */
+
+    char* copy = strdup(str);
+    if (!copy) return -1;
+
+    /* Count migration bands */
+    int n_bands = 0;
+    for (const char* p = str; *p; p++) {
+        if (*p == ',') n_bands++;
+    }
+    n_bands++;  /* One more than number of commas */
+
+    /* Allocate migration list */
+    params->migrations = malloc(sizeof(migration_band_list));
+    if (!params->migrations) {
+        free(copy);
+        return -1;
+    }
+    params->migrations->bands = malloc(n_bands * sizeof(migration_band));
+    if (!params->migrations->bands) {
+        free(params->migrations);
+        params->migrations = NULL;
+        free(copy);
+        return -1;
+    }
+    params->migrations->n_bands = 0;
+
+    /* Parse each band: "source->dest:M" */
+    char* token = strtok(copy, ",");
+    while (token) {
+        token = trim(token);
+
+        /* Find "->" separator */
+        char* arrow = strstr(token, "->");
+        if (!arrow) {
+            fprintf(stderr, "Error: Invalid migration format '%s', expected 'source->dest:M'\n", token);
+            free(copy);
+            return -1;
+        }
+
+        /* Find ":" separator */
+        char* colon = strchr(arrow, ':');
+        if (!colon) {
+            fprintf(stderr, "Error: Invalid migration format '%s', missing rate after ':'\n", token);
+            free(copy);
+            return -1;
+        }
+
+        /* Extract source, dest, and rate */
+        *arrow = '\0';
+        *colon = '\0';
+        char* source_name = trim(token);
+        char* dest_name = trim(arrow + 2);
+        double M = atof(colon + 1);
+
+        if (M < 0) {
+            fprintf(stderr, "Error: Negative migration rate for %s->%s\n", source_name, dest_name);
+            free(copy);
+            return -1;
+        }
+
+        /* Look up source and destination nodes (can be tips or internal) */
+        species_node* source = species_tree_find_node_by_name(params->tree, source_name);
+        species_node* dest = species_tree_find_node_by_name(params->tree, dest_name);
+
+        if (!source) {
+            fprintf(stderr, "Error: Migration source '%s' not found in tree\n", source_name);
+            free(copy);
+            return -1;
+        }
+        if (!dest) {
+            fprintf(stderr, "Error: Migration destination '%s' not found in tree\n", dest_name);
+            free(copy);
+            return -1;
+        }
+
+        if (source->id == dest->id) {
+            fprintf(stderr, "Error: Cannot have migration from population to itself (%s)\n", source_name);
+            free(copy);
+            return -1;
+        }
+
+        /* Add the migration band */
+        migration_band* band = &params->migrations->bands[params->migrations->n_bands];
+        band->from_pop = source->id;
+        band->to_pop = dest->id;
+        band->M = M;
+        params->migrations->n_bands++;
+
+        token = strtok(NULL, ",");
+    }
+
+    free(copy);
+    return 0;
+}
+
 msc_params* msc_parse_control_file(const char* filename) {
     FILE* f = fopen(filename, "r");
     if (!f) {
@@ -119,6 +224,7 @@ msc_params* msc_parse_control_file(const char* filename) {
     params->output_vcf = 0;
     params->vcf_filename = NULL;
     params->verbose = 0;
+    params->migrations = NULL;
 
     char line[4096];
     char* value;
@@ -178,6 +284,19 @@ msc_params* msc_parse_control_file(const char* filename) {
         }
         else if (parse_key_value(trimmed, "verbose", &value)) {
             params->verbose = parse_bool(trim(value));
+        }
+        else if (parse_key_value(trimmed, "migration", &value)) {
+            if (!params->tree) {
+                fprintf(stderr, "Error: 'migration' must come after 'species_tree' (line %d)\n", line_num);
+                msc_free_params(params);
+                fclose(f);
+                return NULL;
+            }
+            if (parse_migrations(trim(value), params) < 0) {
+                msc_free_params(params);
+                fclose(f);
+                return NULL;
+            }
         }
         else {
             fprintf(stderr, "Warning: Unknown parameter at line %d: %s\n", line_num, trimmed);
@@ -241,6 +360,7 @@ void msc_free_params(msc_params* params) {
     if (!params) return;
     if (params->tree) species_tree_free(params->tree);
     if (params->vcf_filename) free(params->vcf_filename);
+    if (params->migrations) msc_free_migrations(params->migrations);
     free(params);
 }
 
@@ -301,7 +421,7 @@ chrsample* msc_create_sample(species_tree* tree, int total_samples) {
 /* ============== Rate Calculation ============== */
 
 msc_rates* msc_calculate_rates(chrsample* sample, species_tree* tree,
-                                double rec_rate, double mut_rate,
+                                msc_params* params, double current_time,
                                 const bitarray* mrca) {
     msc_rates* rates = calloc(1, sizeof(msc_rates));
     if (!rates) return NULL;
@@ -337,11 +457,44 @@ msc_rates* msc_calculate_rates(chrsample* sample, species_tree* tree,
         }
     }
 
+    /* Calculate migration rates if migration is configured */
+    rates->mig_rates = NULL;
+    rates->n_mig_pairs = 0;
+    rates->total_mig_rate = 0;
+
+    if (params->migrations && params->migrations->n_bands > 0) {
+        rates->mig_rates = calloc(params->migrations->n_bands, sizeof(mig_rate_info));
+        if (!rates->mig_rates) {
+            free(rates->pop_rates);
+            free(rates);
+            return NULL;
+        }
+
+        for (int b = 0; b < params->migrations->n_bands; b++) {
+            migration_band* band = &params->migrations->bands[b];
+
+            /* Find lineage count in "to" population (source going backwards) */
+            species_node* to_node = find_node_by_id(tree, band->to_pop);
+            int n_to = to_node ? to_node->active_lineages : 0;
+
+            /* Only add if destination has lineages AND both pops are contemporary */
+            if (n_to > 0 && populations_contemporary(tree, band->from_pop, band->to_pop, current_time)) {
+                double mig_rate = n_to * band->M / 2.0;
+                rates->mig_rates[rates->n_mig_pairs].from_pop = band->from_pop;
+                rates->mig_rates[rates->n_mig_pairs].to_pop = band->to_pop;
+                rates->mig_rates[rates->n_mig_pairs].rate = mig_rate;
+                rates->total_mig_rate += mig_rate;
+                rates->n_mig_pairs++;
+            }
+        }
+    }
+
     /* Recombination and mutation rates scale with active ancestry length */
     double anc_len = getActiveAncLength(sample, mrca);
-    rates->rec_rate = rec_rate * anc_len;
-    rates->mut_rate = mut_rate * anc_len;
-    rates->total_rate = rates->total_coal_rate + rates->rec_rate + rates->mut_rate;
+    rates->rec_rate = params->recombination_rate * anc_len;
+    rates->mut_rate = params->mutation_rate * anc_len;
+    rates->total_rate = rates->total_coal_rate + rates->total_mig_rate +
+                        rates->rec_rate + rates->mut_rate;
 
     return rates;
 }
@@ -349,6 +502,7 @@ msc_rates* msc_calculate_rates(chrsample* sample, species_tree* tree,
 void msc_free_rates(msc_rates* rates) {
     if (!rates) return;
     free(rates->pop_rates);
+    free(rates->mig_rates);
     free(rates);
 }
 
@@ -445,6 +599,109 @@ void msc_count_lineages(chrsample* sample, species_tree* tree) {
     }
 }
 
+/* ============== Migration Functions ============== */
+
+/* Find species node by ID */
+static species_node* find_node_by_id(species_tree* tree, int id) {
+    for (int i = 0; i < tree->n_nodes; i++) {
+        if (tree->nodes[i]->id == id) {
+            return tree->nodes[i];
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Check if a population exists at the given time.
+ * A population exists at time t if:
+ * - For tips: always exists from t=0 until parent's divergence_time
+ * - For internal nodes: exists from its divergence_time until parent's divergence_time
+ *
+ * In our simulation going backwards in time:
+ * - Tips exist when current_time < tip's parent divergence_time
+ * - Internal nodes exist when current_time >= node's divergence_time AND
+ *   current_time < parent's divergence_time (or parent is NULL for root)
+ */
+int msc_population_exists_at_time(species_node* node, double current_time) {
+    if (!node) return 0;
+
+    if (node->is_tip) {
+        /* Tips exist from present (t=0) until their parent's divergence time */
+        if (!node->parent) return 1;  /* Should not happen for tips */
+        return current_time < node->parent->divergence_time;
+    } else {
+        /* Internal nodes exist from their divergence time onwards */
+        if (current_time < node->divergence_time) return 0;
+
+        /* Until parent's divergence time (or forever if root) */
+        if (!node->parent) return 1;
+        return current_time < node->parent->divergence_time;
+    }
+}
+
+/*
+ * Check if two populations are contemporary (both exist at current time).
+ * Migration can only occur between contemporary populations.
+ */
+static int populations_contemporary(species_tree* tree, int pop1_id, int pop2_id, double current_time) {
+    species_node* node1 = find_node_by_id(tree, pop1_id);
+    species_node* node2 = find_node_by_id(tree, pop2_id);
+
+    if (!node1 || !node2) return 0;
+
+    return msc_population_exists_at_time(node1, current_time) &&
+           msc_population_exists_at_time(node2, current_time);
+}
+
+int msc_select_migration_pair(gsl_rng* r, msc_rates* rates) {
+    if (rates->n_mig_pairs == 0) return -1;
+
+    double u = gsl_rng_uniform_pos(r) * rates->total_mig_rate;
+    double cumsum = 0;
+
+    for (int i = 0; i < rates->n_mig_pairs; i++) {
+        cumsum += rates->mig_rates[i].rate;
+        if (u <= cumsum) {
+            return i;
+        }
+    }
+
+    /* Fallback (should not happen) */
+    return rates->n_mig_pairs - 1;
+}
+
+int msc_select_lineage_in_pop(gsl_rng* r, chrsample* sample, int pop_id) {
+    /* Count lineages in this population */
+    int count = 0;
+    for (int i = 0; i < sample->count; i++) {
+        if (sample->chrs[i]->population_id == pop_id) {
+            count++;
+        }
+    }
+
+    if (count == 0) return -1;
+
+    /* Select random one */
+    int target = gsl_rng_uniform_int(r, count);
+    int seen = 0;
+    for (int i = 0; i < sample->count; i++) {
+        if (sample->chrs[i]->population_id == pop_id) {
+            if (seen == target) {
+                return i;
+            }
+            seen++;
+        }
+    }
+
+    return -1;  /* Should not happen */
+}
+
+void msc_free_migrations(migration_band_list* migrations) {
+    if (!migrations) return;
+    free(migrations->bands);
+    free(migrations);
+}
+
 /* ============== Main Simulation ============== */
 
 int msc_simulate(msc_params* params) {
@@ -488,6 +745,7 @@ int msc_simulate(msc_params* params) {
     int n_recombinations = 0;
     int n_mutations = 0;
     int n_coalescences = 0;
+    int n_migrations = 0;
 
     if (params->verbose) {
         fprintf(stderr, "Starting MSC simulation:\n");
@@ -495,6 +753,9 @@ int msc_simulate(msc_params* params) {
         fprintf(stderr, "  Species: %d\n", params->tree->n_tips);
         fprintf(stderr, "  Recombination rate: %.4f\n", params->recombination_rate);
         fprintf(stderr, "  Mutation rate: %.4f\n", params->mutation_rate);
+        if (params->migrations) {
+            fprintf(stderr, "  Migration bands: %d\n", params->migrations->n_bands);
+        }
         fprintf(stderr, "  Seed: %lu\n", params->seed);
         species_tree_print(params->tree, stderr);
     }
@@ -503,8 +764,7 @@ int msc_simulate(msc_params* params) {
     while (n_chrom > 1) {
         /* Calculate rates */
         msc_rates* rates = msc_calculate_rates(sample, params->tree,
-                                                params->recombination_rate,
-                                                params->mutation_rate, mrca);
+                                                params, current_time, mrca);
 
         if (!rates || rates->total_rate <= 0) {
             /* No coalescence/recombination/mutation possible right now.
@@ -572,9 +832,37 @@ int msc_simulate(msc_params* params) {
                 }
             }
         }
-        else if (u < rates->total_coal_rate + rates->rec_rate) {
+        else if (u < rates->total_coal_rate + rates->total_mig_rate) {
+            /* Migration event */
+            int pair_idx = msc_select_migration_pair(r, rates);
+            if (pair_idx >= 0) {
+                int to_pop = rates->mig_rates[pair_idx].to_pop;
+                int from_pop = rates->mig_rates[pair_idx].from_pop;
+
+                /* Select random lineage in to_pop and move it to from_pop */
+                int chr_idx = msc_select_lineage_in_pop(r, sample, to_pop);
+                if (chr_idx >= 0) {
+                    sample->chrs[chr_idx]->population_id = from_pop;
+                    n_migrations++;
+
+                    if (params->verbose) {
+                        /* Find node names for nice output */
+                        species_node* from_node = find_node_by_id(params->tree, from_pop);
+                        species_node* to_node = find_node_by_id(params->tree, to_pop);
+                        const char* from_name = (from_node && from_node->name[0]) ? from_node->name : "?";
+                        const char* to_name = (to_node && to_node->name[0]) ? to_node->name : "?";
+                        fprintf(stderr, "Time %.1f: Migration - lineage from %s to %s\n",
+                                current_time, to_name, from_name);
+                    }
+
+                    /* Update lineage counts (no need to invalidate active length) */
+                    msc_count_lineages(sample, params->tree);
+                }
+            }
+        }
+        else if (u < rates->total_coal_rate + rates->total_mig_rate + rates->rec_rate) {
             /* Recombination event */
-            double rec_pos = (u - rates->total_coal_rate) / params->recombination_rate;
+            double rec_pos = (u - rates->total_coal_rate - rates->total_mig_rate) / params->recombination_rate;
             recombination_event recEv;
             getRecEventActive(sample, rec_pos, &recEv, mrca);
 
@@ -584,7 +872,7 @@ int msc_simulate(msc_params* params) {
         }
         else {
             /* Mutation event */
-            double mut_pos = (u - rates->total_coal_rate - rates->rec_rate) / params->mutation_rate;
+            double mut_pos = (u - rates->total_coal_rate - rates->total_mig_rate - rates->rec_rate) / params->mutation_rate;
             mutation* mutEv = malloc(sizeof(mutation));
             getMutEventActive(sample, mut_pos, mutEv, current_time, mrca);
 
@@ -612,6 +900,7 @@ int msc_simulate(msc_params* params) {
     /* Print summary */
     printf("MSC Simulation Complete:\n");
     printf("  Coalescences: %d\n", n_coalescences);
+    printf("  Migrations: %d\n", n_migrations);
     printf("  Recombinations: %d\n", n_recombinations);
     printf("  Mutations: %d\n", n_mutations);
     printf("  Final time: %.2f generations\n", current_time);

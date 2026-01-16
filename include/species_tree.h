@@ -91,8 +91,15 @@ divergence_event_list* species_tree_create_divergence_events(species_tree* tree)
 
 /*
  * Find species node by name, returns NULL if not found.
+ * Only searches tip nodes.
  */
 species_node* species_tree_find_species(species_tree* tree, const char* name);
+
+/*
+ * Find any node (tip or internal) by name, returns NULL if not found.
+ * Searches all nodes in the tree.
+ */
+species_node* species_tree_find_node_by_name(species_tree* tree, const char* name);
 
 /*
  * Get total sample size across all species.

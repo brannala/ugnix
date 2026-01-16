@@ -14,6 +14,28 @@
  * merge at divergence times (going backwards) according to the species tree.
  */
 
+/* ============== Migration Structures ============== */
+
+/*
+ * A single migration band between two populations.
+ * Migration is specified going backwards in time: a lineage in to_pop
+ * migrates to from_pop at rate M/2 per lineage.
+ * Going forward in time, this represents individuals moving from from_pop to to_pop.
+ */
+typedef struct {
+    int from_pop;           /* Source population ID (backwards: destination) */
+    int to_pop;             /* Dest population ID (backwards: source of lineage) */
+    double M;               /* Migration rate M = 4Nm */
+} migration_band;
+
+/*
+ * List of all migration bands.
+ */
+typedef struct {
+    migration_band* bands;
+    int n_bands;
+} migration_band_list;
+
 /* ============== MSC Parameters ============== */
 
 typedef struct {
@@ -30,6 +52,9 @@ typedef struct {
 
     /* Derived parameters (computed after parsing) */
     int total_samples;               /* Sum of sample sizes across species */
+
+    /* Migration parameters */
+    migration_band_list* migrations; /* Migration bands (NULL if no migration) */
 } msc_params;
 
 /* ============== Control File Parsing ============== */
@@ -75,12 +100,27 @@ typedef struct {
 } pop_rate_info;
 
 /*
+ * Per-migration-band rate information during simulation.
+ */
+typedef struct {
+    int from_pop;                    /* Source population (backwards: destination) */
+    int to_pop;                      /* Destination pop (backwards: source of lineage) */
+    double rate;                     /* n_to * M / 2 */
+} mig_rate_info;
+
+/*
  * Rate calculation result.
  */
 typedef struct {
     pop_rate_info* pop_rates;        /* Per-population rates */
     int n_active_pops;               /* Number of populations with >= 2 lineages */
     double total_coal_rate;          /* Sum of coalescence rates */
+
+    /* Migration rates */
+    mig_rate_info* mig_rates;        /* Per-band migration rates */
+    int n_mig_pairs;                 /* Number of active migration pairs */
+    double total_mig_rate;           /* Sum of migration rates */
+
     double rec_rate;                 /* Global recombination rate * active length */
     double mut_rate;                 /* Global mutation rate * active length */
     double total_rate;               /* Sum of all rates */
@@ -95,9 +135,10 @@ chrsample* msc_create_sample(species_tree* tree, int total_samples);
 /*
  * Calculate event rates for MSC simulation.
  * Per-population coalescence: n_p(n_p-1)/(2*theta_p)
+ * Per-band migration: n_to * M / 2
  */
 msc_rates* msc_calculate_rates(chrsample* sample, species_tree* tree,
-                                double rec_rate, double mut_rate,
+                                msc_params* params, double current_time,
                                 const bitarray* mrca);
 
 /*
@@ -144,5 +185,31 @@ void msc_count_lineages(chrsample* sample, species_tree* tree);
  * Print simulation summary.
  */
 void msc_print_summary(msc_params* params, FILE* out);
+
+/* ============== Migration Functions ============== */
+
+/*
+ * Select which migration pair has the migration event.
+ * Returns index into rates->mig_rates, weighted by each pair's migration rate.
+ */
+int msc_select_migration_pair(gsl_rng* r, msc_rates* rates);
+
+/*
+ * Select a random lineage from a specific population.
+ * Returns the chromosome index, or -1 if no lineages in population.
+ */
+int msc_select_lineage_in_pop(gsl_rng* r, chrsample* sample, int pop_id);
+
+/*
+ * Check if a population exists at the given time.
+ * A population exists if: (1) it's a tip, or (2) current_time >= its divergence_time.
+ * Additionally, it must not have merged yet (current_time < parent's divergence_time).
+ */
+int msc_population_exists_at_time(species_node* node, double current_time);
+
+/*
+ * Free migration band list.
+ */
+void msc_free_migrations(migration_band_list* migrations);
 
 #endif /* MSC_H */

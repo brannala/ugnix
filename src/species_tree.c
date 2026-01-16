@@ -152,8 +152,13 @@ static species_node* parse_subtree(parser_state* state) {
         }
         state->pos++;  /* Skip ')' */
 
-        /* Internal nodes have empty names */
-        node->name[0] = '\0';
+        /* Parse optional internal node name (e.g., ")AB:" or ")ROOT#") */
+        skip_whitespace(state);
+        if (isalpha(*state->pos)) {
+            parse_name(state, node->name, MSC_MAX_SPECIES_NAME);
+        } else {
+            node->name[0] = '\0';
+        }
     } else {
         /* Tip node - parse name */
         node->is_tip = 1;
@@ -366,6 +371,17 @@ species_node* species_tree_find_species(species_tree* tree, const char* name) {
     return NULL;
 }
 
+species_node* species_tree_find_node_by_name(species_tree* tree, const char* name) {
+    if (!tree || !name || !*name) return NULL;
+
+    for (int i = 0; i < tree->n_nodes; i++) {
+        if (tree->nodes[i]->name[0] && strcmp(tree->nodes[i]->name, name) == 0) {
+            return tree->nodes[i];
+        }
+    }
+    return NULL;
+}
+
 int species_tree_total_samples(species_tree* tree) {
     if (!tree) return 0;
 
@@ -387,8 +403,13 @@ static void print_node_recursive(species_node* node, FILE* out, int depth) {
         fprintf(out, "Tip[%d]: %s, theta=%.6f, branch=%.1f, samples=%d\n",
                 node->id, node->name, node->theta, node->branch_length, node->sample_size);
     } else {
-        fprintf(out, "Internal[%d]: theta=%.6f, branch=%.1f, div_time=%.1f\n",
-                node->id, node->theta, node->branch_length, node->divergence_time);
+        if (node->name[0]) {
+            fprintf(out, "Internal[%d]: %s, theta=%.6f, branch=%.1f, div_time=%.1f\n",
+                    node->id, node->name, node->theta, node->branch_length, node->divergence_time);
+        } else {
+            fprintf(out, "Internal[%d]: theta=%.6f, branch=%.1f, div_time=%.1f\n",
+                    node->id, node->theta, node->branch_length, node->divergence_time);
+        }
     }
 
     print_node_recursive(node->left, out, depth + 1);
@@ -417,6 +438,10 @@ static void print_newick_recursive(species_node* node, FILE* out) {
         fprintf(out, ",");
         print_newick_recursive(node->right, out);
         fprintf(out, ")");
+        /* Print internal node name if present */
+        if (node->name[0]) {
+            fprintf(out, "%s", node->name);
+        }
     }
 
     if (node->branch_length > 0) {

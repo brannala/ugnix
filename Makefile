@@ -100,14 +100,14 @@ sample.o: sample.c sample.h
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim coalsim_msc test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
-	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o msc.o msc_main.o species_tree.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o pedsim_multipop.o pedsim_multipop_main.o seqassemble.o seqassemble_main.o pedsim_seq.o pedsim_seq_main.o vcfassemble.o vcfassemble_main.o pedsim_vcf.o pedsim_vcf_main.o pedsim_vcf_multipop.o pedsim_vcf_multipop_main.o sample.o sample_main.o
+	$(RM) gsum het coalsim coalsim_msc test_ugnix test_coalescent test_msc runtests kinship hwe-dis pedtrans test_pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
+	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o msc.o msc_main.o species_tree.o test_ugnix.o test_coalescent.o test_msc.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o pedsim_multipop.o pedsim_multipop_main.o seqassemble.o seqassemble_main.o pedsim_seq.o pedsim_seq_main.o vcfassemble.o vcfassemble_main.o pedsim_vcf.o pedsim_vcf_main.o pedsim_vcf_multipop.o pedsim_vcf_multipop_main.o sample.o sample_main.o
 tidy:
 	$(RM) *.o
 
 # build test suite
 
-tests: test_ugnix test_coalescent test_pedtrans runtests
+tests: test_ugnix test_coalescent test_pedtrans test_msc runtests
 test_ugnix: test_ugnix.o uGnix.o unity.o -lglib-2.0
 	$(CC) $(PROFILE) test_ugnix.o uGnix.o unity.o -lglib-2.0 -lm -o test_ugnix
 test_ugnix.o: test_ugnix.c uGnix.h unity.h
@@ -122,6 +122,10 @@ test_pedtrans: test_pedtrans.o pedtrans.o unity.o -lglib-2.0 -lm -lgsl -lgslcbla
 	$(CC) $(PROFILE) test_pedtrans.o pedtrans.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_pedtrans
 test_pedtrans.o: test_pedtrans.c pedtrans.h unity.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
+test_msc: test_msc.o msc.o species_tree.o coalescent.o bitarray.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas
+	$(CC) $(PROFILE) test_msc.o msc.o species_tree.o coalescent.o bitarray.o uGnix.o unity.o -lglib-2.0 -lm -lgsl -lgslcblas -o test_msc
+test_msc.o: test_msc.c msc.h species_tree.h coalescent.h bitarray.h uGnix.h unity.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) $(TESTFLAGS) -c $<
 runtests:
 	@eval $$(echo "#!/bin/bash" > runtests)
 	@eval $$(echo "echo \"\nRunning tests on ugnix.c ...\"" >> runtests)
@@ -130,11 +134,14 @@ runtests:
 	@eval $$(echo "./test_coalescent" >>runtests)
 	@eval $$(echo "echo \"\nRunning tests on pedtrans.c ...\"" >> runtests)
 	@eval $$(echo "./test_pedtrans" >>runtests)
+	@eval $$(echo "echo \"\nRunning tests on msc.c ...\"" >> runtests)
+	@eval $$(echo "./test_msc" >>runtests)
 	@eval $$(chmod +x runtests)
 testsclean:
 	$(RM) test_ugnix
 	$(RM) test_coalescent
 	$(RM) test_pedtrans
+	$(RM) test_msc
 	$(RM) runtests
-	$(RM) test_ugnix.o unity.o uGnix.o test_coalescent.o coalescent.o test_pedtrans.o pedtrans.o
+	$(RM) test_ugnix.o unity.o uGnix.o test_coalescent.o coalescent.o test_pedtrans.o pedtrans.o test_msc.o msc.o species_tree.o
 
