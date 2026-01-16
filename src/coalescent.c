@@ -155,6 +155,7 @@ chromosome* copy_chrom(chromosome* sourceChr)
   newChr->ancLen = sourceChr->ancLen;  /* copy cached ancestral length */
   newChr->activeLen = sourceChr->activeLen;
   newChr->activeLenValid = sourceChr->activeLenValid;
+  newChr->population_id = sourceChr->population_id;  /* copy population ID for MSC */
   currOld = sourceChr->anc;
   newChr->anc = calloc(1, sizeof(ancestry));
   int firstAnc=1;
@@ -500,6 +501,10 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   chromosome* newLeft = malloc(sizeof(chromosome));
   chromosome* newRight = malloc(sizeof(chromosome));
 
+  /* Inherit population_id from parent chromosome (for MSC) */
+  newLeft->population_id = chrtmp->population_id;
+  newRight->population_id = chrtmp->population_id;
+
   newRight->anc = calloc(1, sizeof(ancestry));
   newRight->anc->abits = bitarray_create(g_noSamples);  /* zero bitarray */
   newRight->anc->position = recEv.location;
@@ -759,6 +764,7 @@ void coalescence(coalescent_pair pair, unsigned int* noChrom, chrsample* chrom,
   double len2 = ptrchr2->ancLen;
 
   chromosome* commonAnc = mergeChr(ptrchr1, ptrchr2);
+  commonAnc->population_id = ptrchr1->population_id;  /* Inherit population for MSC */
   combineIdentAdjAncSegs(commonAnc);
 
   /* Calculate merged length and overlap */
@@ -1113,6 +1119,7 @@ chrsample* create_sample(int noChrom)
       newChrom->anc->position = 1.0;
       newChrom->ancLen = 1.0;  /* initial: full chromosome is ancestral */
       newChrom->activeLenValid = 0;  /* will be calculated on first use */
+      newChrom->population_id = 0;  /* default population for single-pop simulation */
       chromSample->chrs[chromSample->count++] = newChrom;
     }
   return chromSample;

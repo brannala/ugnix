@@ -8,7 +8,7 @@ PROFILE = -g
 
 # build programs
 
-all: hwe-dis kinship gsum het coalsim pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
+all: hwe-dis kinship gsum het coalsim coalsim_msc pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
 hwe-dis: hwe-dis.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) hwe-dis.o uGnix.o -lglib-2.0 -lm -o hwe-dis
 kinship: kinship.o data.o uGnix.o -lglib-2.0
@@ -19,6 +19,8 @@ gsum: gsum.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) gsum.o uGnix.o -lglib-2.0 -lm -o gsum
 coalsim: coalsim.o coalescent.o bitarray.o uGnix.o -lglib-2.0
 	$(CC) $(PROFILE) coalsim.o coalescent.o bitarray.o uGnix.o -lglib-2.0 -lm -lgsl -lgslcblas -o coalsim
+coalsim_msc: msc_main.o msc.o species_tree.o coalescent.o bitarray.o uGnix.o -lglib-2.0
+	$(CC) $(PROFILE) msc_main.o msc.o species_tree.o coalescent.o bitarray.o uGnix.o -lglib-2.0 -lm -lgsl -lgslcblas -o coalsim_msc
 kinship.o: kinship.c kinship_data.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 data.o: data.c kinship_data.h
@@ -30,6 +32,12 @@ het.o: het.c uGnix.h
 gsum.o: gsum.c uGnix.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 coalsim.o: coalsim.c uGnix.h coalescent.h bitarray.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+msc_main.o: msc_main.c msc.h species_tree.h coalescent.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+msc.o: msc.c msc.h species_tree.h coalescent.h bitarray.h
+	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
+species_tree.o: species_tree.c species_tree.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 coalescent.o: coalescent.c uGnix.h coalescent.h bitarray.h
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
@@ -92,8 +100,8 @@ sample.o: sample.c sample.h
 uGnix.o: uGnix.c
 	$(CC) $(PROFILE) $(CFLAGS) $(LDFLAGS) -c $<
 clean:
-	$(RM) gsum het coalsim test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
-	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o pedsim_multipop.o pedsim_multipop_main.o seqassemble.o seqassemble_main.o pedsim_seq.o pedsim_seq_main.o vcfassemble.o vcfassemble_main.o pedsim_vcf.o pedsim_vcf_main.o pedsim_vcf_multipop.o pedsim_vcf_multipop_main.o sample.o sample_main.o
+	$(RM) gsum het coalsim coalsim_msc test_ugnix test_coalescent runtests kinship hwe-dis pedtrans test_pedtrans pedsim pedsim_multipop seqassemble pedsim_seq vcfassemble pedsim_vcf pedsim_vcf_multipop sample
+	$(RM) gsum.o uGnix.o het.o coalsim.o coalescent.o bitarray.o msc.o msc_main.o species_tree.o test_ugnix.o test_coalescent.o unity.o kinship.o data.o hwe-dis.o pedtrans.o pedtrans_main.o test_pedtrans.o pedsim.o pedsim_main.o pedsim_multipop.o pedsim_multipop_main.o seqassemble.o seqassemble_main.o pedsim_seq.o pedsim_seq_main.o vcfassemble.o vcfassemble_main.o pedsim_vcf.o pedsim_vcf_main.o pedsim_vcf_multipop.o pedsim_vcf_multipop_main.o sample.o sample_main.o
 tidy:
 	$(RM) *.o
 

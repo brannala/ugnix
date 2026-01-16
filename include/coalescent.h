@@ -1,3 +1,6 @@
+#ifndef COALESCENT_H
+#define COALESCENT_H
+
 #include<limits.h>
 #include<assert.h>
 #include<gsl/gsl_rng.h>
@@ -41,6 +44,7 @@ struct chromosome
   double ancLen;      /* cached total ancestral length for O(log n) event lookup */
   double activeLen;   /* cached active length (excluding MRCA segments) */
   int activeLenValid; /* 1 if activeLen is valid, 0 if needs recalc */
+  int population_id;  /* population ID for multispecies coalescent (default: 0) */
 };
 typedef struct chromosome chromosome;
 
@@ -297,5 +301,7 @@ void printTree(struct tree* lroot, int noSamples, int toScreen, FILE* tree_file)
 void printTreeNewick(struct tree* root, int noSamples, int toScreen, FILE* tree_file);
 
 void freeTree(struct tree* node);
+
+#endif /* COALESCENT_H */
 
 
