@@ -507,7 +507,23 @@ int msc_simulate(msc_params* params) {
                                                 params->mutation_rate, mrca);
 
         if (!rates || rates->total_rate <= 0) {
-            /* Only MRCA segments remain */
+            /* No coalescence/recombination/mutation possible right now.
+             * But if there are pending divergence events, we should wait
+             * for them to merge populations, enabling further coalescence. */
+            if (next_div) {
+                /* Jump to next divergence event */
+                current_time = next_div->time;
+                if (params->verbose) {
+                    fprintf(stderr, "Time %.1f: Divergence - merging populations %d and %d into %d\n",
+                            current_time, next_div->child1->id, next_div->child2->id,
+                            next_div->parent->id);
+                }
+                msc_process_divergence(sample, next_div);
+                next_div = next_div->next;
+                if (rates) msc_free_rates(rates);
+                continue;
+            }
+            /* No divergence events and no events possible - truly done */
             if (rates) msc_free_rates(rates);
             break;
         }
