@@ -6,6 +6,7 @@
 #include<gsl/gsl_rng.h>
 #include<gsl/gsl_randist.h>
 #include "bitarray.h"
+#include "fenwick.h"
 
 #define POS2BASE(X,Y) (long)(ceil((X)*(Y))-1) /* convert POS X in (0,1) to BASE position
 				   in sequence of length Y */
@@ -56,6 +57,7 @@ typedef struct
   double ancLength;     /* cached total ancestral length */
   double activeAncLength; /* cached active length (excluding MRCA segments) */
   int activeAncValid;   /* 1 if activeAncLength is valid, 0 if needs recalc */
+  fenwick_tree* ft;     /* Fenwick tree for O(log n) chromosome lookup (NULL if unused) */
 } chrsample;
 
 typedef struct
@@ -150,7 +152,8 @@ void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv);
 void getRecEventActive(chrsample* chrom, double eventPos, recombination_event* recEv,
                        const bitarray* mrca);
 
-void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom);
+void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom,
+                   const bitarray* mrca);
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2);
 

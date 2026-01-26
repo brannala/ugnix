@@ -543,7 +543,7 @@ int main(int argc, char **argv)
 	  eventLocation = ancLength*gsl_rng_uniform_pos(r);
 	  assert(eventLocation <= ancLength);
 	  getRecEventActive(chromSample, eventLocation, &recombEvent, mrca);
-	  recombination(&noChrom,recombEvent,chromSample);
+	  recombination(&noChrom,recombEvent,chromSample,mrca);
 	  noRec++;
 	  if (peak_detected) post_peak_rec++; else pre_peak_rec++;
 	}

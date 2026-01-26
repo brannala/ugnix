@@ -210,7 +210,7 @@ void test_recombination(void) {
   getChrPtr(5, chromSample)->ancLen = 0.8;
   calcAncLength(chromSample);
   getRecEvent(chromSample, 1.42, &recEv);
-  recombination(&noChrom, recEv, chromSample);
+  recombination(&noChrom, recEv, chromSample, NULL);
 
   // After recombination, noChrom should be 11
   TEST_ASSERT_EQUAL_UINT32(11, noChrom);

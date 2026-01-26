@@ -404,6 +404,9 @@ chrsample* msc_create_sample(species_tree* tree, int total_samples) {
     sample->activeAncLength = (double)total_samples;
     sample->activeAncValid = 0;
 
+    /* Create Fenwick tree for O(log n) chromosome lookup */
+    sample->ft = fenwick_create(sample->capacity);
+
     /* Create chromosomes for each species */
     int global_idx = 0;
     for (int i = 0; i < tree->n_tips; i++) {
@@ -417,6 +420,7 @@ chrsample* msc_create_sample(species_tree* tree, int total_samples) {
                     free(sample->chrs[k]);
                 }
                 free(sample->chrs);
+                fenwick_free(sample->ft);
                 free(sample);
                 return NULL;
             }
@@ -436,6 +440,12 @@ chrsample* msc_create_sample(species_tree* tree, int total_samples) {
         }
         sp->active_lineages = sp->sample_size;
     }
+
+    /* Initialize Fenwick tree: all chromosomes start with weight 1.0
+     * (no MRCA segments exist before any coalescence) */
+    for (int i = 0; i < total_samples; i++)
+        sample->ft->weights[i] = 1.0;
+    fenwick_rebuild(sample->ft, total_samples);
 
     return sample;
 }
@@ -761,6 +771,9 @@ static int msc_simulate_single_pop_fast(msc_params* params, gsl_rng* r, msc_resu
     sample->activeAncLength = (double)params->total_samples;
     sample->activeAncValid = 0;
 
+    /* Create Fenwick tree for O(log n) chromosome lookup */
+    sample->ft = fenwick_create(sample->capacity);
+
     for (int i = 0; i < params->total_samples; i++) {
         chromosome* chr = malloc(sizeof(chromosome));
         if (!chr) {
@@ -779,6 +792,11 @@ static int msc_simulate_single_pop_fast(msc_params* params, gsl_rng* r, msc_resu
         chr->population_id = 0;  /* Not used in fast path */
         sample->chrs[sample->count++] = chr;
     }
+
+    /* Initialize Fenwick tree: all chromosomes start with weight 1.0 */
+    for (int i = 0; i < params->total_samples; i++)
+        sample->ft->weights[i] = 1.0;
+    fenwick_rebuild(sample->ft, params->total_samples);
 
     /* Simulation variables */
     double current_time = 0;
@@ -826,7 +844,7 @@ static int msc_simulate_single_pop_fast(msc_params* params, gsl_rng* r, msc_resu
             double rec_pos = (u - coal_rate) / params->recombination_rate;
             recombination_event recEv;
             getRecEventActive(sample, rec_pos, &recEv, mrca);
-            recombination(&n_chrom, recEv, sample);
+            recombination(&n_chrom, recEv, sample, mrca);
             n_recombinations++;
         }
         else {
@@ -1039,7 +1057,7 @@ int msc_simulate_single(msc_params* params, gsl_rng* r, msc_result* result) {
             getRecEventActive(sample, rec_pos, &recEv, mrca);
 
             /* recombination() in coalescent.c now inherits population_id automatically */
-            recombination(&n_chrom, recEv, sample);
+            recombination(&n_chrom, recEv, sample, mrca);
             n_recombinations++;
         }
         else {

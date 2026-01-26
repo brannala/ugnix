@@ -228,6 +228,7 @@ void delete_sample(chrsample* chrom)
     free(chrom->chrs[i]);
   }
   free(chrom->chrs);
+  fenwick_free(chrom->ft);
 }
 
 /* Append chromosome to array, growing if needed */
@@ -236,6 +237,8 @@ void appendChrom(chrsample* chrom, chromosome* chr)
   if (chrom->count >= chrom->capacity) {
     chrom->capacity *= 2;
     chrom->chrs = realloc(chrom->chrs, chrom->capacity * sizeof(chromosome*));
+    if (chrom->ft)
+      fenwick_grow(chrom->ft, chrom->capacity);
   }
   chrom->chrs[chrom->count++] = chr;
 }
@@ -405,11 +408,26 @@ void invalidateActiveAncLength(chrsample* chrom)
 }
 
 /* Update total active ancestral length after coalescence.
- * Recalculates to ensure is_mrca gets set on all segments. */
+ * Recalculates to ensure is_mrca gets set on all segments.
+ * Also rebuilds the Fenwick tree from updated per-chromosome active lengths. */
 void updateActiveAncLengthCoal(chrsample* chrom, const bitarray* mrca)
 {
-  chrom->activeAncLength = calcActiveAncLength(chrom, mrca);
+  double totLength = 0;
+  for (int i = 0; i < chrom->count; i++) {
+    double len = calcChromAncLengthActive(chrom->chrs[i], mrca);
+    chrom->chrs[i]->activeLen = len;
+    chrom->chrs[i]->activeLenValid = 1;
+    totLength += len;
+  }
+  chrom->activeAncLength = totLength;
   chrom->activeAncValid = 1;
+
+  /* Rebuild Fenwick tree from updated active lengths */
+  if (chrom->ft) {
+    for (int i = 0; i < chrom->count; i++)
+      chrom->ft->weights[i] = chrom->chrs[i]->activeLen;
+    fenwick_rebuild(chrom->ft, chrom->count);
+  }
 }
 
 /*
@@ -429,41 +447,50 @@ void getRecEvent(chrsample* chrom, double eventPos, recombination_event* recEv)
 
 /* Get recombination event location, optionally skipping MRCA segments.
  * If mrca is NULL, counts all non-zero segments (original behavior).
- * If mrca is provided, skips segments where abits == mrca. */
+ * If mrca is provided, skips segments where abits == mrca.
+ *
+ * When a Fenwick tree is present and mrca is provided, uses O(log n)
+ * lookup instead of O(n) cumulative sum construction. */
 void getRecEventActive(chrsample* chrom, double eventPos, recombination_event* recEv,
                        const bitarray* mrca)
 {
   int n = chrom->count;
+  int lo;
+  double cumLen;
 
-  /* Build cumulative sum array using cached per-chromosome active lengths.
-   * This is O(n) instead of O(n * segments). */
-  double* cumSum = alloca((n + 1) * sizeof(double));
-  cumSum[0] = 0;
-  for (int i = 0; i < n; i++) {
-    if (mrca) {
-      chromosome* chr = chrom->chrs[i];
-      if (!chr->activeLenValid) {
-        chr->activeLen = calcChromAncLengthActive(chr, mrca);
-        chr->activeLenValid = 1;
+  if (chrom->ft && mrca) {
+    /* O(log n) Fenwick tree path */
+    lo = fenwick_find(chrom->ft, eventPos);
+    cumLen = (lo > 0) ? fenwick_query(chrom->ft, lo - 1) : 0.0;
+  } else {
+    /* O(n) fallback: build cumulative sum array */
+    double* cumSum = alloca((n + 1) * sizeof(double));
+    cumSum[0] = 0;
+    for (int i = 0; i < n; i++) {
+      if (mrca) {
+        chromosome* chr = chrom->chrs[i];
+        if (!chr->activeLenValid) {
+          chr->activeLen = calcChromAncLengthActive(chr, mrca);
+          chr->activeLenValid = 1;
+        }
+        cumSum[i + 1] = cumSum[i] + chr->activeLen;
+      } else {
+        cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
       }
-      cumSum[i + 1] = cumSum[i] + chr->activeLen;
-    } else {
-      cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
     }
-  }
 
-  /* Binary search: find largest i where cumSum[i] <= eventPos */
-  int lo = 0, hi = n;
-  while (lo < hi) {
-    int mid = (lo + hi + 1) / 2;  /* round up to avoid infinite loop */
-    if (cumSum[mid] <= eventPos)
-      lo = mid;
-    else
-      hi = mid - 1;
+    /* Binary search: find largest i where cumSum[i] <= eventPos */
+    lo = 0;
+    int hi = n;
+    while (lo < hi) {
+      int mid = (lo + hi + 1) / 2;
+      if (cumSum[mid] <= eventPos)
+        lo = mid;
+      else
+        hi = mid - 1;
+    }
+    cumLen = cumSum[lo];
   }
-
-  /* lo is the target chromosome index */
-  double cumLen = cumSum[lo];
 
   /* Linear scan within the target chromosome to find exact position.
    * Skip MRCA segments if mrca is provided. */
@@ -493,7 +520,8 @@ void getRecEventActive(chrsample* chrom, double eventPos, recombination_event* r
     }
 }
 
-void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom)
+void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* chrom,
+                   const bitarray* mrca)
 {
   chromosome* chrtmp = recEv.chrom;
   ancestry* tmp = chrtmp->anc;
@@ -555,6 +583,8 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
   currAnc->position = 1.0;
   currAnc->next = NULL;
 
+  fenwick_tree* ft = chrom->ft;
+
   /* O(1) deletion using stored index */
   delete_chrom_idx(recEv.chromIdx, chrom);
 
@@ -593,8 +623,13 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
 
   if (hasAncLeft && chromosome_overlaps_targets(newLeft))
     {
-      newLeft->ancLen = calcChromAncLength(newLeft);  /* cache for binary search */
-      newLeft->activeLenValid = 0;  /* will be calculated on first use */
+      newLeft->ancLen = calcChromAncLength(newLeft);
+      if (mrca) {
+        newLeft->activeLen = calcChromAncLengthActive(newLeft, mrca);
+        newLeft->activeLenValid = 1;
+      } else {
+        newLeft->activeLenValid = 0;
+      }
       newAncLen += newLeft->ancLen;
       appendChrom(chrom, newLeft);
       added++;
@@ -608,8 +643,13 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
 
   if (hasAncRight && chromosome_overlaps_targets(newRight))
     {
-      newRight->ancLen = calcChromAncLength(newRight);  /* cache for binary search */
-      newRight->activeLenValid = 0;  /* will be calculated on first use */
+      newRight->ancLen = calcChromAncLength(newRight);
+      if (mrca) {
+        newRight->activeLen = calcChromAncLengthActive(newRight, mrca);
+        newRight->activeLenValid = 1;
+      } else {
+        newRight->activeLenValid = 0;
+      }
       newAncLen += newRight->ancLen;
       appendChrom(chrom, newRight);
       added++;
@@ -623,6 +663,25 @@ void recombination(unsigned int* noChrom, recombination_event recEv, chrsample* 
 
   /* Net change: -1 (deleted) + added */
   *noChrom = *noChrom + added - 1;
+
+  /* Rebuild Fenwick tree after structural changes.
+   * Recombination changes at most 3 positions (del_idx, and 1-2 new chromosomes),
+   * but rebuild ensures consistency with no stale tree values. */
+  if (ft) {
+    for (int i = 0; i < chrom->count; i++) {
+      if (mrca) {
+        if (!chrom->chrs[i]->activeLenValid) {
+          chrom->chrs[i]->activeLen =
+            calcChromAncLengthActive(chrom->chrs[i], mrca);
+          chrom->chrs[i]->activeLenValid = 1;
+        }
+        ft->weights[i] = chrom->chrs[i]->activeLen;
+      } else {
+        ft->weights[i] = chrom->chrs[i]->ancLen;
+      }
+    }
+    fenwick_rebuild(ft, chrom->count);
+  }
 }
 
 chromosome* mergeChr(chromosome* ptrchr1, chromosome* ptrchr2)
@@ -1109,6 +1168,9 @@ chrsample* create_sample(int noChrom)
   chromSample->activeAncLength = noChrom;  /* Initially all segments are active */
   chromSample->activeAncValid = 0;  /* Will be calculated on first use */
 
+  /* Create Fenwick tree for O(log n) chromosome lookup */
+  chromSample->ft = fenwick_create(chromSample->capacity);
+
   // create array of n sampled chromosomes
   for (int i = 0; i < noChrom; i++)
     {
@@ -1122,6 +1184,13 @@ chrsample* create_sample(int noChrom)
       newChrom->population_id = 0;  /* default population for single-pop simulation */
       chromSample->chrs[chromSample->count++] = newChrom;
     }
+
+  /* Initialize Fenwick tree: all chromosomes start with weight 1.0
+   * (no MRCA segments exist before any coalescence) */
+  for (int i = 0; i < noChrom; i++)
+    chromSample->ft->weights[i] = 1.0;
+  fenwick_rebuild(chromSample->ft, noChrom);
+
   return chromSample;
 }
 
@@ -1366,40 +1435,50 @@ void getMutEvent(chrsample* chrom, double eventPos, mutation* mutEv, double time
 
 /* Get mutation event location, optionally skipping MRCA segments.
  * If mrca is NULL, counts all non-zero segments (original behavior).
- * If mrca is provided, skips segments where abits == mrca. */
+ * If mrca is provided, skips segments where abits == mrca.
+ *
+ * When a Fenwick tree is present and mrca is provided, uses O(log n)
+ * lookup instead of O(n) cumulative sum construction. */
 void getMutEventActive(chrsample* chrom, double eventPos, mutation* mutEv, double time,
                        const bitarray* mrca)
 {
   int n = chrom->count;
+  int lo;
+  double cumLen;
 
-  /* Build cumulative sum array using cached per-chromosome active lengths.
-   * This is O(n) instead of O(n * segments). */
-  double* cumSum = alloca((n + 1) * sizeof(double));
-  cumSum[0] = 0;
-  for (int i = 0; i < n; i++) {
-    if (mrca) {
-      chromosome* chr = chrom->chrs[i];
-      if (!chr->activeLenValid) {
-        chr->activeLen = calcChromAncLengthActive(chr, mrca);
-        chr->activeLenValid = 1;
+  if (chrom->ft && mrca) {
+    /* O(log n) Fenwick tree path */
+    lo = fenwick_find(chrom->ft, eventPos);
+    cumLen = (lo > 0) ? fenwick_query(chrom->ft, lo - 1) : 0.0;
+  } else {
+    /* O(n) fallback: build cumulative sum array */
+    double* cumSum = alloca((n + 1) * sizeof(double));
+    cumSum[0] = 0;
+    for (int i = 0; i < n; i++) {
+      if (mrca) {
+        chromosome* chr = chrom->chrs[i];
+        if (!chr->activeLenValid) {
+          chr->activeLen = calcChromAncLengthActive(chr, mrca);
+          chr->activeLenValid = 1;
+        }
+        cumSum[i + 1] = cumSum[i] + chr->activeLen;
+      } else {
+        cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
       }
-      cumSum[i + 1] = cumSum[i] + chr->activeLen;
-    } else {
-      cumSum[i + 1] = cumSum[i] + chrom->chrs[i]->ancLen;
     }
-  }
 
-  /* Binary search: find largest i where cumSum[i] <= eventPos */
-  int lo = 0, hi = n;
-  while (lo < hi) {
-    int mid = (lo + hi + 1) / 2;
-    if (cumSum[mid] <= eventPos)
-      lo = mid;
-    else
-      hi = mid - 1;
+    /* Binary search: find largest i where cumSum[i] <= eventPos */
+    lo = 0;
+    int hi = n;
+    while (lo < hi) {
+      int mid = (lo + hi + 1) / 2;
+      if (cumSum[mid] <= eventPos)
+        lo = mid;
+      else
+        hi = mid - 1;
+    }
+    cumLen = cumSum[lo];
   }
-
-  double cumLen = cumSum[lo];
 
   /* Linear scan within target chromosome, skipping MRCA segments if provided */
   ancestry* tmp_anc = chrom->chrs[lo]->anc;
