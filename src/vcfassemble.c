@@ -30,10 +30,13 @@ founder_vcf* read_founder_vcf(const char* filename)
     fvcf->founder_names = NULL;
     fvcf->n_founder_samples = 0;
 
-    char line[MAX_LINE_LENGTH];
+    /* Lines can be very long (one column per founder haplotype), so read
+     * them with getline rather than a fixed-size buffer. */
+    char* line = NULL;
+    size_t line_cap = 0;
 
     /* Parse header */
-    while (fgets(line, sizeof(line), fp)) {
+    while (getline(&line, &line_cap, fp) != -1) {
         if (strncmp(line, "##contig", 8) == 0) {
             /* Parse chromosome ID and length: ##contig=<ID=chr1,length=10000000> */
             char* id_ptr = strstr(line, "ID=");
@@ -80,7 +83,7 @@ founder_vcf* read_founder_vcf(const char* filename)
     }
 
     /* Parse mutation records */
-    while (fgets(line, sizeof(line), fp)) {
+    while (getline(&line, &line_cap, fp) != -1) {
         if (line[0] == '#') continue;
 
         if (fvcf->n_mutations >= fvcf->capacity) {
@@ -114,7 +117,8 @@ founder_vcf* read_founder_vcf(const char* filename)
                     break;
                 default:
                     if (col >= 9) {
-                        mut->founder_geno[sample_idx] = atoi(tok);
+                        if (sample_idx < mut->n_founders)
+                            mut->founder_geno[sample_idx] = atoi(tok);
                         sample_idx++;
                     }
                     break;
@@ -123,9 +127,17 @@ founder_vcf* read_founder_vcf(const char* filename)
             col++;
         }
 
+        if (sample_idx != fvcf->n_founder_samples) {
+            fprintf(stderr, "Error: founder VCF record chr%d:%ld has %d genotypes, "
+                    "expected %d\n", mut->chrom_id, mut->position, sample_idx,
+                    fvcf->n_founder_samples);
+            exit(1);
+        }
+
         fvcf->n_mutations++;
     }
 
+    free(line);
     fclose(fp);
     return fvcf;
 }
@@ -156,16 +168,23 @@ typedef struct {
 
 static founder_map* parse_founder_list(FILE* fp)
 {
-    char line[MAX_LINE_LENGTH];
+    /* The "# Founders:" line lists every founder and can be arbitrarily long */
+    char* line = NULL;
+    size_t line_cap = 0;
+    int capacity = 1024;
     founder_map* fm = malloc(sizeof(founder_map));
-    fm->names = malloc(1024 * sizeof(char*));
+    fm->names = malloc(capacity * sizeof(char*));
     fm->n_founders = 0;
 
     rewind(fp);
-    while (fgets(line, sizeof(line), fp)) {
+    while (getline(&line, &line_cap, fp) != -1) {
         if (strncmp(line, "# Founders:", 11) == 0) {
             char* tok = strtok(line + 11, " \t\n");
-            while (tok && fm->n_founders < 1024) {
+            while (tok) {
+                if (fm->n_founders >= capacity) {
+                    capacity *= 2;
+                    fm->names = realloc(fm->names, capacity * sizeof(char*));
+                }
                 fm->names[fm->n_founders] = strdup(tok);
                 fm->n_founders++;
                 tok = strtok(NULL, " \t\n");
@@ -173,6 +192,7 @@ static founder_map* parse_founder_list(FILE* fp)
             break;
         }
     }
+    free(line);
     rewind(fp);
     return fm;
 }
@@ -231,14 +251,15 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
     pts->n_samples = 0;
     pts->founder_map = fm;
 
-    char line[MAX_LINE_LENGTH];
+    char* line = NULL;
+    size_t line_cap = 0;
     char current_individual[MAX_NAME_LENGTH] = "";
     int current_chrom_id = 1;
     int current_homolog = -1;
     sample_chrom* current = NULL;
     int sample_capacity = INITIAL_CAPACITY;
 
-    while (fgets(line, sizeof(line), fp)) {
+    while (getline(&line, &line_cap, fp) != -1) {
         if (line[0] == '#') {
             /* Check for chromosome count in header */
             if (strncmp(line, "# Chromosomes:", 14) == 0) {
@@ -354,6 +375,7 @@ pedtrans_segments* read_pedtrans_segments(const char* filename)
         }
     }
 
+    free(line);
     fclose(fp);
     return pts;
 }
@@ -562,6 +584,13 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
     fprintf(out, "\n");
 
     int n_founders = fvcf->n_founder_samples;
+    founder_map* fmap = (founder_map*) pts->founder_map;
+    if (fmap && 2 * fmap->n_founders != n_founders) {
+        fprintf(stderr, "Error: segment file lists %d founders (%d haplotypes) but the "
+                "founder VCF has %d haplotype columns\n", fmap->n_founders,
+                2 * fmap->n_founders, n_founders);
+        return 1;
+    }
 
     /* Process each mutation */
     int variants_written = 0;
@@ -574,8 +603,8 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
         if (chrom_length == 0) chrom_length = 10000000;
         double inv_chrom_length = 1.0 / (double)chrom_length;
 
-        /* Convert position to fraction */
-        double pos_frac = (double)mut->position * inv_chrom_length;
+        /* Convert 1-based position to a fraction in [0, 1) */
+        double pos_frac = (double)(mut->position - 1) * inv_chrom_length;
 
         /* Collect genotypes using fast lookup */
         int any_variant = 0;
@@ -583,21 +612,25 @@ int assemble_sample_vcf(founder_vcf* fvcf, pedtrans_segments* pts,
         for (int s = 0; s < n_output; s++) {
             /* Paternal haplotype */
             int vcf_idx = get_haplotype_fast(pts, lut, s, chrom_id, 0, pos_frac);
-            if (vcf_idx >= 0 && vcf_idx < n_founders) {
-                geno[s * 2] = mut->founder_geno[vcf_idx];
-                if (geno[s * 2]) any_variant = 1;
-            } else {
-                geno[s * 2] = 0;
+            if (vcf_idx < 0 || vcf_idx >= n_founders) {
+                fprintf(stderr, "Error: chr%d:%ld (paternal homolog of sample %d) does not map "
+                        "to a founder haplotype (index %d, %d founder haplotypes)\n",
+                        chrom_id, mut->position, s, vcf_idx, n_founders);
+                exit(1);
             }
+            geno[s * 2] = mut->founder_geno[vcf_idx];
+            if (geno[s * 2]) any_variant = 1;
 
             /* Maternal haplotype */
             vcf_idx = get_haplotype_fast(pts, lut, s, chrom_id, 1, pos_frac);
-            if (vcf_idx >= 0 && vcf_idx < n_founders) {
-                geno[s * 2 + 1] = mut->founder_geno[vcf_idx];
-                if (geno[s * 2 + 1]) any_variant = 1;
-            } else {
-                geno[s * 2 + 1] = 0;
+            if (vcf_idx < 0 || vcf_idx >= n_founders) {
+                fprintf(stderr, "Error: chr%d:%ld (maternal homolog of sample %d) does not map "
+                        "to a founder haplotype (index %d, %d founder haplotypes)\n",
+                        chrom_id, mut->position, s, vcf_idx, n_founders);
+                exit(1);
             }
+            geno[s * 2 + 1] = mut->founder_geno[vcf_idx];
+            if (geno[s * 2 + 1]) any_variant = 1;
         }
 
         /* Only output if at least one sample has the variant */
