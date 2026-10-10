@@ -1,7 +1,7 @@
 /*
  * species_tree.c - Species tree parsing and operations for multispecies coalescent
  *
- * Parses extended Newick format with theta annotations:
+ * Parses extended Newick format with population size annotations:
  *   ((A:1000#0.001,B:1000#0.002):500#0.003,C:1500#0.001)#0.002;
  */
 
@@ -26,7 +26,7 @@ static void skip_whitespace(parser_state* state);
 static int parse_name(parser_state* state, char* name, int max_len);
 static double parse_number(parser_state* state);
 static double parse_branch_length(parser_state* state);
-static double parse_theta_annotation(parser_state* state);
+static double parse_size_annotation(parser_state* state);
 
 /* ============== Parser Implementation ============== */
 
@@ -77,10 +77,10 @@ static double parse_branch_length(parser_state* state) {
     return parse_number(state);
 }
 
-static double parse_theta_annotation(parser_state* state) {
+static double parse_size_annotation(parser_state* state) {
     skip_whitespace(state);
     if (*state->pos != '#') {
-        return -1.0;  /* No theta specified (error for MSC) */
+        return -1.0;  /* No N specified (error for MSC) */
     }
     state->pos++;  /* Skip '#' */
     return parse_number(state);
@@ -90,7 +90,7 @@ static species_node* create_node(parser_state* state) {
     species_node* node = calloc(1, sizeof(species_node));
     if (!node) return NULL;
     node->id = state->next_id++;
-    node->theta = -1.0;  /* Mark as unset */
+    node->N = -1.0;  /* Mark as unset */
     return node;
 }
 
@@ -98,8 +98,8 @@ static species_node* create_node(parser_state* state) {
  * Parse a subtree (recursive descent)
  *
  * subtree -> leaf | internal
- * leaf -> name:length#theta
- * internal -> (subtree,subtree):length#theta
+ * leaf -> name:length#N
+ * internal -> (subtree,subtree):length#N
  */
 static species_node* parse_subtree(parser_state* state) {
     skip_whitespace(state);
@@ -174,8 +174,8 @@ static species_node* parse_subtree(parser_state* state) {
     /* Parse branch length (optional) */
     node->branch_length = parse_branch_length(state);
 
-    /* Parse theta annotation (required for MSC) */
-    node->theta = parse_theta_annotation(state);
+    /* Parse population size annotation N (required for MSC) */
+    node->N = parse_size_annotation(state);
 
     return node;
 }
@@ -400,15 +400,15 @@ static void print_node_recursive(species_node* node, FILE* out, int depth) {
     for (int i = 0; i < depth; i++) fprintf(out, "  ");
 
     if (node->is_tip) {
-        fprintf(out, "Tip[%d]: %s, theta=%.6f, branch=%.1f, samples=%d\n",
-                node->id, node->name, node->theta, node->branch_length, node->sample_size);
+        fprintf(out, "Tip[%d]: %s, N=%g, branch=%.1f, samples=%d\n",
+                node->id, node->name, node->N, node->branch_length, node->sample_size);
     } else {
         if (node->name[0]) {
-            fprintf(out, "Internal[%d]: %s, theta=%.6f, branch=%.1f, div_time=%.1f\n",
-                    node->id, node->name, node->theta, node->branch_length, node->divergence_time);
+            fprintf(out, "Internal[%d]: %s, N=%g, branch=%.1f, div_time=%.1f\n",
+                    node->id, node->name, node->N, node->branch_length, node->divergence_time);
         } else {
-            fprintf(out, "Internal[%d]: theta=%.6f, branch=%.1f, div_time=%.1f\n",
-                    node->id, node->theta, node->branch_length, node->divergence_time);
+            fprintf(out, "Internal[%d]: N=%g, branch=%.1f, div_time=%.1f\n",
+                    node->id, node->N, node->branch_length, node->divergence_time);
         }
     }
 
@@ -447,8 +447,8 @@ static void print_newick_recursive(species_node* node, FILE* out) {
     if (node->branch_length > 0) {
         fprintf(out, ":%.1f", node->branch_length);
     }
-    if (node->theta >= 0) {
-        fprintf(out, "#%.6f", node->theta);
+    if (node->N >= 0) {
+        fprintf(out, "#%g", node->N);
     }
 }
 

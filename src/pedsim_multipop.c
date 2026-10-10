@@ -122,6 +122,7 @@ static int add_individual(multipop_pedigree* ped, int generation, int sex,
     indiv->population_id = population_id;
     indiv->is_founder = is_founder;
     indiv->is_migrant = is_migrant;
+    indiv->birth_pop = population_id;
 
     ped->n_individuals++;
     return id;
@@ -313,6 +314,7 @@ multipop_pedigree* multipop_create(multipop_pop_params* pop_params, int n_pops,
     }
     ped->n_generations = k + 1;
     ped->k_generations = k;
+    ped->migrate_before_sampling = 0;
 
     /* Initialize RNG */
     ped->rng = gsl_rng_alloc(gsl_rng_mt19937);
@@ -374,6 +376,57 @@ void multipop_free_stats(multipop_stats* stats) {
 /* ============================================================================
  * SIMULATION
  * ============================================================================ */
+
+
+/*
+ * Draw the parents of one child (a member of population p at generation t-1).
+ *
+ * Each parent's population is sampled independently: a parent comes from pop i
+ * (i != p) with probability migration[i][p], i.e. that parent migrated into p
+ * and mated there. If ped->migrate_before_sampling is set and the child is a
+ * sampled individual (t == 1), the child itself first migrates: it was born in
+ * pop b with probability migration[b][p] and its parents are then drawn
+ * relative to b in the same way.
+ */
+static int draw_parents(multipop_pedigree* ped, int*** parent_map,
+                        int child_id, int p, int t, int is_founder)
+{
+    int n_pops = ped->n_populations;
+    int birth_pop = p;
+    if (t == 1 && ped->migrate_before_sampling) {
+        birth_pop = sample_parent_population(ped->rng, ped->migration, n_pops, p);
+    }
+    ped->individuals[child_id].birth_pop = birth_pop;
+
+    int father_src_pop = sample_parent_population(ped->rng, ped->migration,
+                                                  n_pops, birth_pop);
+    int mother_src_pop = sample_parent_population(ped->rng, ped->migration,
+                                                  n_pops, birth_pop);
+
+    /* Migrant if either parent is from a population other than p */
+    ped->individuals[child_id].is_migrant =
+        (father_src_pop != p || mother_src_pop != p) ? 1 : 0;
+
+    int f_idx = gsl_rng_uniform_int(ped->rng, ped->populations[father_src_pop].pop_size / 2);
+    int m_idx = gsl_rng_uniform_int(ped->rng, ped->populations[mother_src_pop].pop_size / 2);
+
+    if (parent_map[father_src_pop][0][f_idx] < 0) {
+        int father_id = add_individual(ped, t, 0, -1, -1, father_src_pop, is_founder, 0);
+        if (father_id < 0) return -1;
+        parent_map[father_src_pop][0][f_idx] = father_id;
+        add_to_generation(ped->gens_by_pop[t]->generations[father_src_pop], father_id, 0);
+    }
+    ped->individuals[child_id].father_id = parent_map[father_src_pop][0][f_idx];
+
+    if (parent_map[mother_src_pop][1][m_idx] < 0) {
+        int mother_id = add_individual(ped, t, 1, -1, -1, mother_src_pop, is_founder, 0);
+        if (mother_id < 0) return -1;
+        parent_map[mother_src_pop][1][m_idx] = mother_id;
+        add_to_generation(ped->gens_by_pop[t]->generations[mother_src_pop], mother_id, 1);
+    }
+    ped->individuals[child_id].mother_id = parent_map[mother_src_pop][1][m_idx];
+    return 0;
+}
 
 int multipop_simulate(multipop_pedigree* ped) {
     if (!ped) return -1;
@@ -463,90 +516,14 @@ int multipop_simulate(multipop_pedigree* ped) {
             if (n_prev == 0) continue;
 
             /* Process each individual at previous generation in this population */
-            for (int i = 0; i < prev_gen->n_males; i++) {
-                int child_id = prev_gen->male_ids[i];
-
-                /* Sample source population INDEPENDENTLY for each parent */
-                int father_src_pop = sample_parent_population(ped->rng, ped->migration,
-                                                               n_pops, p);
-                int mother_src_pop = sample_parent_population(ped->rng, ped->migration,
-                                                               n_pops, p);
-
-                /* Mark as migrant if either parent is from a different population */
-                int is_migrant = (father_src_pop != p || mother_src_pop != p) ? 1 : 0;
-                ped->individuals[child_id].is_migrant = is_migrant;
-
-                int n_males_father_src = ped->populations[father_src_pop].pop_size / 2;
-                int n_females_mother_src = ped->populations[mother_src_pop].pop_size / 2;
-
-                /* Draw father and mother from their respective source populations */
-                int f_idx = gsl_rng_uniform_int(ped->rng, n_males_father_src);
-                int m_idx = gsl_rng_uniform_int(ped->rng, n_females_mother_src);
-
-                /* Get or create father from father's source population */
-                if (parent_map[father_src_pop][0][f_idx] < 0) {
-                    int father_id = add_individual(ped, t, 0, -1, -1, father_src_pop,
-                                                    is_founder, 0);
-                    if (father_id < 0) goto cleanup_error;
-                    parent_map[father_src_pop][0][f_idx] = father_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[father_src_pop],
-                                      father_id, 0);
-                }
-                ped->individuals[child_id].father_id = parent_map[father_src_pop][0][f_idx];
-
-                /* Get or create mother from mother's source population */
-                if (parent_map[mother_src_pop][1][m_idx] < 0) {
-                    int mother_id = add_individual(ped, t, 1, -1, -1, mother_src_pop,
-                                                    is_founder, 0);
-                    if (mother_id < 0) goto cleanup_error;
-                    parent_map[mother_src_pop][1][m_idx] = mother_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[mother_src_pop],
-                                      mother_id, 1);
-                }
-                ped->individuals[child_id].mother_id = parent_map[mother_src_pop][1][m_idx];
+            int n_m = prev_gen->n_males, n_f = prev_gen->n_females;
+            for (int i = 0; i < n_m; i++) {
+                if (draw_parents(ped, parent_map, prev_gen->male_ids[i], p, t, is_founder) < 0)
+                    goto cleanup_error;
             }
-
-            for (int i = 0; i < prev_gen->n_females; i++) {
-                int child_id = prev_gen->female_ids[i];
-
-                /* Sample source population INDEPENDENTLY for each parent */
-                int father_src_pop = sample_parent_population(ped->rng, ped->migration,
-                                                               n_pops, p);
-                int mother_src_pop = sample_parent_population(ped->rng, ped->migration,
-                                                               n_pops, p);
-
-                /* Mark as migrant if either parent is from a different population */
-                int is_migrant = (father_src_pop != p || mother_src_pop != p) ? 1 : 0;
-                ped->individuals[child_id].is_migrant = is_migrant;
-
-                int n_males_father_src = ped->populations[father_src_pop].pop_size / 2;
-                int n_females_mother_src = ped->populations[mother_src_pop].pop_size / 2;
-
-                /* Draw father and mother from their respective source populations */
-                int f_idx = gsl_rng_uniform_int(ped->rng, n_males_father_src);
-                int m_idx = gsl_rng_uniform_int(ped->rng, n_females_mother_src);
-
-                /* Get or create father from father's source population */
-                if (parent_map[father_src_pop][0][f_idx] < 0) {
-                    int father_id = add_individual(ped, t, 0, -1, -1, father_src_pop,
-                                                    is_founder, 0);
-                    if (father_id < 0) goto cleanup_error;
-                    parent_map[father_src_pop][0][f_idx] = father_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[father_src_pop],
-                                      father_id, 0);
-                }
-                ped->individuals[child_id].father_id = parent_map[father_src_pop][0][f_idx];
-
-                /* Get or create mother from mother's source population */
-                if (parent_map[mother_src_pop][1][m_idx] < 0) {
-                    int mother_id = add_individual(ped, t, 1, -1, -1, mother_src_pop,
-                                                    is_founder, 0);
-                    if (mother_id < 0) goto cleanup_error;
-                    parent_map[mother_src_pop][1][m_idx] = mother_id;
-                    add_to_generation(ped->gens_by_pop[t]->generations[mother_src_pop],
-                                      mother_id, 1);
-                }
-                ped->individuals[child_id].mother_id = parent_map[mother_src_pop][1][m_idx];
+            for (int i = 0; i < n_f; i++) {
+                if (draw_parents(ped, parent_map, prev_gen->female_ids[i], p, t, is_founder) < 0)
+                    goto cleanup_error;
             }
         }
     }
@@ -822,23 +799,62 @@ double** multipop_parse_migration(const char* str, int n_pops) {
     }
 
     /* Parse rows separated by semicolons */
-    char* row_str = strtok(copy, ";");
+    char* row_save = NULL;
+    char* row_str = strtok_r(copy, ";", &row_save);
     int row = 0;
     while (row_str && row < n_pops) {
         /* Parse columns separated by commas */
         char* row_copy = strdup(row_str);
-        char* col_str = strtok(row_copy, ",");
+        char* col_save = NULL;
+        char* col_str = strtok_r(row_copy, ",", &col_save);
         int col = 0;
         while (col_str && col < n_pops) {
             mig[row][col] = atof(col_str);
-            col_str = strtok(NULL, ",");
+            col_str = strtok_r(NULL, ",", &col_save);
             col++;
         }
         free(row_copy);
-        row_str = strtok(NULL, ";");
+        row_str = strtok_r(NULL, ";", &row_save);
         row++;
     }
 
     free(copy);
     return mig;
+}
+
+void multipop_write_truth(multipop_pedigree* ped, FILE* out) {
+    if (!ped || !out) return;
+    fprintf(out, "# Migrant ancestry of sampled individuals (pedsim_multipop)\n");
+    fprintf(out, "# migrate_before_sampling=%d\n", ped->migrate_before_sampling);
+    fprintf(out, "# True migration matrix in BA3 orientation, m[j][i] = fraction of pop j\n"
+                 "# whose migrants come from pop i (rows = receiving pop, cols = source pop);\n"
+                 "# diagonal = 1 - row sum:\n");
+    for (int j = 0; j < ped->n_populations; j++) {
+        double rowsum = 0.0;
+        for (int i = 0; i < ped->n_populations; i++)
+            if (i != j) rowsum += ped->migration[i][j];
+        fprintf(out, "#   pop%d:", j);
+        for (int i = 0; i < ped->n_populations; i++)
+            fprintf(out, " %.4f", i == j ? 1.0 - rowsum : ped->migration[i][j]);
+        fprintf(out, "\n");
+    }
+    fprintf(out, "# ba3_class: 0 non-migrant, 1 first-generation migrant, "
+                 "2 second-generation migrant (born in sampled pop, >=1 parent from elsewhere)\n");
+    fprintf(out, "indiv\tpop\tbirth_pop\tfather_pop\tmother_pop\tba3_class\tsource_pop\n");
+    for (int p = 0; p < ped->n_populations; p++) {
+        multipop_generation* gen = ped->gens_by_pop[0]->generations[p];
+        int n = gen->n_males + gen->n_females;
+        for (int i = 0; i < n; i++) {
+            int id = (i < gen->n_males) ? gen->male_ids[i] : gen->female_ids[i - gen->n_males];
+            multipop_indiv* ind = &ped->individuals[id];
+            int fp = ped->individuals[ind->father_id].population_id;
+            int mp = ped->individuals[ind->mother_id].population_id;
+            int cls = 0, src = p;
+            if (ind->birth_pop != p) { cls = 1; src = ind->birth_pop; }
+            else if (fp != p)        { cls = 2; src = fp; }
+            else if (mp != p)        { cls = 2; src = mp; }
+            fprintf(out, "P%d_I%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+                    p, id, p, ind->birth_pop, fp, mp, cls, src);
+        }
+    }
 }

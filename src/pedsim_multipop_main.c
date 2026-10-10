@@ -26,9 +26,14 @@ static void print_usage(const char* progname) {
     fprintf(stderr, "\nMigration options:\n");
     fprintf(stderr, "  -m STR    Full migration matrix, semicolon-separated rows\n");
     fprintf(stderr, "            e.g., \"0,0.01;0.01,0\" for 2 populations\n");
-    fprintf(stderr, "            m[i][j] = prob individual in j has parents from i\n");
+    fprintf(stderr, "            m[i][j] = prob that each parent of an individual in j\n");
+    fprintf(stderr, "            comes from i (sampled independently for the two parents)\n");
     fprintf(stderr, "  -M NUM    Symmetric island model migration rate (alternative to -m)\n");
     fprintf(stderr, "            Total migration rate m, divided equally among other pops\n");
+    fprintf(stderr, "  -a        Migration before sampling: each sampled individual in j\n");
+    fprintf(stderr, "            was born in i with prob m[i][j] (first-generation migrant);\n");
+    fprintf(stderr, "            its parents are then drawn relative to its birth population\n");
+    fprintf(stderr, "  -t FILE   Write migrant-ancestry truth for sampled individuals\n");
     fprintf(stderr, "\nOther options:\n");
     fprintf(stderr, "  -s NUM    Random seed (default: 0 = time-based)\n");
     fprintf(stderr, "  -v        Verbose output (print statistics)\n");
@@ -55,9 +60,11 @@ int main(int argc, char** argv) {
     char* output_file = NULL;
     int verbose = 0;
     int dot_output = 0;
+    int migrate_before_sampling = 0;
+    char* truth_file = NULL;
 
     int c;
-    while ((c = getopt(argc, argv, "J:N:n:k:m:M:s:o:vdh")) != -1) {
+    while ((c = getopt(argc, argv, "J:N:n:k:m:M:s:o:t:avdh")) != -1) {
         switch (c) {
             case 'J':
                 n_pops = atoi(optarg);
@@ -85,6 +92,12 @@ int main(int argc, char** argv) {
                 break;
             case 'v':
                 verbose = 1;
+                break;
+            case 'a':
+                migrate_before_sampling = 1;
+                break;
+            case 't':
+                truth_file = optarg;
                 break;
             case 'd':
                 dot_output = 1;
@@ -242,6 +255,9 @@ int main(int argc, char** argv) {
     if (migration) multipop_free_migration(migration, n_pops);
     free(params);
 
+    ped->migrate_before_sampling = migrate_before_sampling;
+    if (migrate_before_sampling)
+        fprintf(stderr, "Migration before sampling: on (first-generation migrants possible)\n");
     fprintf(stderr, "\nSimulating pedigree...\n");
     if (multipop_simulate(ped) < 0) {
         fprintf(stderr, "Error: simulation failed\n");
@@ -277,6 +293,18 @@ int main(int argc, char** argv) {
     fclose(out);
 
     fprintf(stderr, "Output written to: %s\n", output_file);
+
+    if (truth_file) {
+        FILE* tf = fopen(truth_file, "w");
+        if (!tf) {
+            fprintf(stderr, "Error: cannot open truth file: %s\n", truth_file);
+            multipop_free(ped);
+            return 1;
+        }
+        multipop_write_truth(ped, tf);
+        fclose(tf);
+        fprintf(stderr, "Migrant-ancestry truth written to: %s\n", truth_file);
+    }
 
     multipop_free(ped);
     return 0;

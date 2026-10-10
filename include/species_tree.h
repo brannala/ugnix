@@ -17,7 +17,7 @@ typedef struct species_node {
     int id;                              /* Unique node ID (0..n_nodes-1) */
     char name[MSC_MAX_SPECIES_NAME];     /* Species name (tips only, empty for internal) */
     double branch_length;                /* Branch length to parent (in generations) */
-    double theta;                        /* 4Nu for this population */
+    double N;                            /* Diploid population size for this population */
     double divergence_time;              /* Absolute time from present (computed) */
 
     struct species_node* parent;         /* Parent node (NULL for root) */
@@ -63,9 +63,9 @@ typedef struct {
 /* ============== Species Tree Parsing ============== */
 
 /*
- * Parse Newick string with theta annotations.
+ * Parse Newick string with population size (N) annotations.
  *
- * Extended Newick format: name:branch_length#theta
+ * Extended Newick format: name:branch_length#N  (N = diploid size)
  * Example: ((A:1000#0.001,B:1000#0.002):500#0.003,C:1500#0.001)#0.002;
  *
  * Returns species_tree on success, NULL on error.
@@ -112,7 +112,7 @@ int species_tree_total_samples(species_tree* tree);
 void species_tree_print(species_tree* tree, FILE* out);
 
 /*
- * Print tree in Newick format (without theta annotations).
+ * Print tree in Newick format (without N annotations).
  */
 void species_tree_print_newick(species_tree* tree, FILE* out);
 

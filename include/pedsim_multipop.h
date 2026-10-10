@@ -53,6 +53,9 @@ typedef struct {
     int population_id;      /* Which population this individual belongs to */
     int is_founder;         /* 1 if founder (no parents simulated), 0 otherwise */
     int is_migrant;         /* 1 if parents drawn from different population */
+    int birth_pop;          /* Population where the individual was born. Differs from
+                               population_id only for sampled individuals that migrated
+                               before sampling (see migrate_before_sampling). */
 } multipop_indiv;
 
 /*
@@ -97,6 +100,9 @@ typedef struct {
 
     /* Shared parameters */
     int k_generations;          /* k: number of generations to simulate */
+    int migrate_before_sampling;/* 1: sampled individuals may themselves be migrants
+                                   (born in pop i with prob migration[i][j], parents
+                                   then drawn relative to the birth population) */
 
     /* Random number generator */
     gsl_rng* rng;
@@ -183,6 +189,15 @@ multipop_stats* multipop_get_stats(multipop_pedigree* ped);
  * Individual names are prefixed with population: P0_I0, P1_I0, etc.
  */
 void multipop_write_pedigree(multipop_pedigree* ped, FILE* out);
+
+/*
+ * Write migrant-ancestry truth for the sampled individuals (generation 0).
+ * One line per sample: name, sampled pop, birth pop, father's pop, mother's pop,
+ * BA3 class (0 = non-migrant, 1 = first-generation migrant, 2 = second-generation
+ * migrant, i.e. born in the sampled pop with at least one parent from elsewhere)
+ * and the source population for classes 1 and 2.
+ */
+void multipop_write_truth(multipop_pedigree* ped, FILE* out);
 
 /*
  * Write statistics summary to file

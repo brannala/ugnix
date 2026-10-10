@@ -55,19 +55,21 @@ static double** parse_migration(const char* str, int n_pops)
     }
 
     char* copy = strdup(str);
-    char* row_str = strtok(copy, ";");
+    char* row_save = NULL;
+    char* row_str = strtok_r(copy, ";", &row_save);
     int row = 0;
     while (row_str && row < n_pops) {
         char* row_copy = strdup(row_str);
-        char* col_str = strtok(row_copy, ",");
+        char* col_save = NULL;
+        char* col_str = strtok_r(row_copy, ",", &col_save);
         int col = 0;
         while (col_str && col < n_pops) {
             mig[row][col] = atof(col_str);
-            col_str = strtok(NULL, ",");
+            col_str = strtok_r(NULL, ",", &col_save);
             col++;
         }
         free(row_copy);
-        row_str = strtok(NULL, ";");
+        row_str = strtok_r(NULL, ";", &row_save);
         row++;
     }
 
@@ -96,15 +98,27 @@ static void print_usage(const char* progname)
     fprintf(stderr, "  -c NUM    Number of chromosomes to simulate (default: 1)\n");
     fprintf(stderr, "\nMigration options:\n");
     fprintf(stderr, "  -m STR    Full migration matrix, semicolon-separated rows\n");
+    fprintf(stderr, "            m[i][j] = prob that each parent of an individual in j comes\n");
+    fprintf(stderr, "            from i (the two parents are sampled independently)\n");
     fprintf(stderr, "  -M NUM    Symmetric island model migration rate\n");
+    fprintf(stderr, "  -a        Migration before sampling: a sampled individual in j was\n");
+    fprintf(stderr, "            born in i with prob m[i][j] (first-generation migrant)\n");
     fprintf(stderr, "\nCoalescent options:\n");
-    fprintf(stderr, "  -E NUM    Effective population size for coalescent (default: 10000)\n");
+    fprintf(stderr, "  -E NUM    Effective population size for coalescent (default: 10000);\n");
+    fprintf(stderr, "            with -T, the size of the ancestral (root) population\n");
+    fprintf(stderr, "  -T NUM    Divergence time (generations) of a star tree from which\n");
+    fprintf(stderr, "            each population's founders are drawn (tip sizes = -N);\n");
+    fprintf(stderr, "            default: off (all founders from one population of size -E)\n");
     fprintf(stderr, "  -r NUM    Recombination rate in cM (default: 1.0)\n");
     fprintf(stderr, "  -u NUM    Mutation rate (default: 0.5)\n");
     fprintf(stderr, "  -s NUM    Random seed (default: 0 = random)\n");
     fprintf(stderr, "\nOutput options:\n");
     fprintf(stderr, "  -o FILE   Output VCF file (required)\n");
     fprintf(stderr, "  -S        Output samples only (exclude founders)\n");
+    fprintf(stderr, "  -L NUM    Keep at most NUM SNPs per chromosome, chosen at random among\n");
+    fprintf(stderr, "            sites polymorphic in the output samples (default: 0 = all)\n");
+    fprintf(stderr, "            Also written: <out>.meta.txt (sample, pop; for BA3 -M) and\n");
+    fprintf(stderr, "            <out>.truth.tsv (migrant ancestry of sampled individuals)\n");
     fprintf(stderr, "  -k        Keep temporary files\n");
     fprintf(stderr, "  -v        Verbose output\n");
     fprintf(stderr, "  -h        Show this help message\n");
@@ -127,6 +141,9 @@ int main(int argc, char** argv)
         .coal_pop_size = 10000,
         .rec_rate = 1.0,
         .mut_rate = 0.5,
+        .div_time = -1.0,
+        .migrate_before_sampling = 0,
+        .snps_per_chrom = 0,
         .seed = 0,
         .output_vcf = NULL,
         .samples_only = 0,
@@ -139,7 +156,7 @@ int main(int argc, char** argv)
     char* mig_str = NULL;
 
     int c;
-    while ((c = getopt(argc, argv, "J:N:n:g:c:m:M:E:r:u:s:o:Skvh")) != -1) {
+    while ((c = getopt(argc, argv, "J:N:n:g:c:m:M:E:r:u:s:o:T:L:aSkvh")) != -1) {
         switch (c) {
             case 'J':
                 params.n_populations = atoi(optarg);
@@ -180,6 +197,15 @@ int main(int argc, char** argv)
                 break;
             case 'o':
                 params.output_vcf = optarg;
+                break;
+            case 'T':
+                params.div_time = atof(optarg);
+                break;
+            case 'L':
+                params.snps_per_chrom = atoi(optarg);
+                break;
+            case 'a':
+                params.migrate_before_sampling = 1;
                 break;
             case 'S':
                 params.samples_only = 1;
@@ -320,6 +346,13 @@ int main(int argc, char** argv)
 
     fprintf(stderr, "Coalescent: Ne=%.0f, r=%.2f cM, m=%.2f\n",
             params.coal_pop_size, params.rec_rate, params.mut_rate);
+    if (params.div_time >= 0)
+        fprintf(stderr, "Founder populations: star tree, T=%g generations, root N=%.0f\n",
+                params.div_time, params.coal_pop_size);
+    if (params.migrate_before_sampling)
+        fprintf(stderr, "Migration before sampling: on\n");
+    if (params.snps_per_chrom > 0)
+        fprintf(stderr, "SNPs kept per chromosome: %d\n", params.snps_per_chrom);
 
     /* Run pipeline */
     int result = run_multipop_vcf_pipeline(&params);
