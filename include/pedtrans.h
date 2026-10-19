@@ -109,6 +109,7 @@ typedef struct {
     diploid_chromosomes* chromosomes;  /* Array: [indiv_id * n_chromosomes + chr_id] */
     int n_chromosomes;                 /* Number of chromosomes per individual */
     double rec_rate;                   /* Recombination rate (expected crossovers) */
+    double* rec_rates;                 /* Per-chromosome rates (n_chromosomes entries) */
     gsl_rng* rng;                      /* Random number generator */
     unsigned long seed;                /* RNG seed for reproducibility */
 } ped_simulation;
@@ -247,6 +248,14 @@ void free_simulation(ped_simulation* sim);
 ped_simulation* simulate_pedigree(const char* ped_file, int n_chromosomes,
                                    double rec_rate, unsigned long seed);
 
+/*
+ * Run simulation with a separate recombination rate for each chromosome
+ * rec_rates: n_chromosomes entries, expected crossovers per meiosis
+ *            (map length in Morgans)
+ */
+ped_simulation* simulate_pedigree_rates(const char* ped_file, int n_chromosomes,
+                                         const double* rec_rates, unsigned long seed);
+
 /* ============================================================================
  * OUTPUT FUNCTIONS
  * ============================================================================ */
@@ -265,6 +274,14 @@ void print_all_segments(ped_simulation* sim, FILE* out);
  * Print simulation summary/header
  */
 void print_simulation_header(ped_simulation* sim, FILE* out);
+
+/*
+ * Print, for each individual without children (or all individuals if
+ * all_individuals is set), the number of genealogical ancestors (founders
+ * in the individual's pedigree) and genetic ancestors (founders that
+ * contribute at least one segment to the individual's genome)
+ */
+void print_ancestor_summary(ped_simulation* sim, FILE* out, int all_individuals);
 
 /* ============================================================================
  * UTILITY FUNCTIONS

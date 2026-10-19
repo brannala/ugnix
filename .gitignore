@@ -12,3 +12,16 @@ kinship
 coalsim
 pedtrans
 pedsim
+coalsim_msc
+pedsim_multipop
+pedsim_seq
+pedsim_vcf
+pedsim_vcf_multipop
+sample
+seqassemble
+vcfassemble
+test_ugnix
+test_coalescent
+test_pedtrans
+test_msc
+runtests

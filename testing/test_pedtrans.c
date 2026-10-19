@@ -353,7 +353,7 @@ void test_simulate_trio(void) {
     fclose(fp);
 
     /* Run simulation */
-    ped_simulation* sim = simulate_pedigree(tmp_file, 1.0, 12345);
+    ped_simulation* sim = simulate_pedigree(tmp_file, 1, 1.0, 12345);
     TEST_ASSERT_NOT_NULL(sim);
     TEST_ASSERT_NOT_NULL(sim->ped);
     TEST_ASSERT_NOT_NULL(sim->chromosomes);
@@ -387,6 +387,48 @@ void test_simulate_trio(void) {
         int fid = sim->chromosomes[child_id].maternal->segments[i].origin.founder_id;
         TEST_ASSERT_EQUAL_INT(mom_id, fid);  /* Should trace to mom */
     }
+
+    free_simulation(sim);
+    remove(tmp_file);
+}
+
+/* Without recombination each chromosome copy comes from one grandparent */
+void test_ancestor_summary_no_recombination(void) {
+    const char* tmp_file = "/tmp/test_ancestors.ped";
+    FILE* fp = fopen(tmp_file, "w");
+    TEST_ASSERT_NOT_NULL(fp);
+    fprintf(fp, "gf1 0 0\ngm1 0 0\ngf2 0 0\ngm2 0 0\n");
+    fprintf(fp, "dad gf1 gm1\nmom gf2 gm2\nchild dad mom\n");
+    fclose(fp);
+
+    ped_simulation* sim = simulate_pedigree(tmp_file, 1, 0.0, 12345);
+    TEST_ASSERT_NOT_NULL(sim);
+
+    FILE* out = tmpfile();
+    TEST_ASSERT_NOT_NULL(out);
+    print_ancestor_summary(sim, out, 0);
+    rewind(out);
+
+    char line[256], name[64];
+    int genealogical, genetic, haps, segments, n_rows = 0;
+    double mean_per_chrom;
+    while (fgets(line, sizeof(line), out)) {
+        if (line[0] == '#' || strncmp(line, "individual", 10) == 0) continue;
+        TEST_ASSERT_EQUAL_INT(6, sscanf(line, "%63s %d %d %d %d %lf", name,
+                                        &genealogical, &genetic, &haps,
+                                        &segments, &mean_per_chrom));
+        n_rows++;
+    }
+    fclose(out);
+
+    /* Only the child has no children */
+    TEST_ASSERT_EQUAL_INT(1, n_rows);
+    TEST_ASSERT_EQUAL_STRING("child", name);
+    TEST_ASSERT_EQUAL_INT(4, genealogical);
+    TEST_ASSERT_EQUAL_INT(2, genetic);
+    TEST_ASSERT_EQUAL_INT(2, haps);
+    TEST_ASSERT_EQUAL_INT(2, segments);
+    TEST_ASSERT_EQUAL_FLOAT(1.0, mean_per_chrom);
 
     free_simulation(sim);
     remove(tmp_file);
@@ -428,6 +470,7 @@ int main(void) {
 
     /* Simulation tests */
     RUN_TEST(test_simulate_trio);
+    RUN_TEST(test_ancestor_summary_no_recombination);
 
     /* Utility tests */
     RUN_TEST(test_origin_equal);

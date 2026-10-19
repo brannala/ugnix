@@ -29,9 +29,17 @@ static void print_usage(const char* program_name) {
     fprintf(stderr, "  -c NUM     Number of chromosomes to simulate (default: %d)\n", DEFAULT_N_CHROMOSOMES);
     fprintf(stderr, "  -r RATE    Recombination rate (expected crossovers per meiosis)\n");
     fprintf(stderr, "             Default: %.1f\n", DEFAULT_REC_RATE);
+    fprintf(stderr, "  -R LIST    Per-chromosome recombination rates, comma-separated\n");
+    fprintf(stderr, "             (map lengths in Morgans); sets the number of chromosomes\n");
+    fprintf(stderr, "             and overrides -c and -r\n");
     fprintf(stderr, "  -s SEED    Random seed for reproducibility\n");
     fprintf(stderr, "             Default: time-based\n");
     fprintf(stderr, "  -o FILE    Output file (default: stdout)\n");
+    fprintf(stderr, "  -A FILE    Write the number of genealogical and genetic ancestors\n");
+    fprintf(stderr, "             (founders) of each individual without children (\"-\" = stdout);\n");
+    fprintf(stderr, "             segments are then written only if -o is given\n");
+    fprintf(stderr, "  -a         With -A, summarize all individuals, not only those\n");
+    fprintf(stderr, "             without children\n");
     fprintf(stderr, "  -v         Verbose output (print progress)\n");
     fprintf(stderr, "  -h         Show this help message\n");
     fprintf(stderr, "\n");
@@ -46,6 +54,28 @@ static void print_usage(const char* program_name) {
     fprintf(stderr, "Example:\n");
     fprintf(stderr, "  %s -c 5 -r 1.5 -s 12345 pedigree.txt\n", program_name);
     fprintf(stderr, "  %s -r 2.0 -o output.txt pedigree.txt\n", program_name);
+    fprintf(stderr, "  %s -R 2.86,2.68,2.23 -A ancestors.tsv pedigree.txt\n", program_name);
+}
+
+/* Parse comma-separated list of non-negative rates; returns count or -1 */
+static int parse_rates(const char* str, double** rates) {
+    int n = 1;
+    for (const char* p = str; *p; p++)
+        if (*p == ',') n++;
+    *rates = malloc(n * sizeof(double));
+    if (!*rates) return -1;
+    const char* p = str;
+    for (int i = 0; i < n; i++) {
+        char* end;
+        (*rates)[i] = strtod(p, &end);
+        if (end == p || (*end != ',' && *end != '\0') || (*rates)[i] < 0) {
+            free(*rates);
+            *rates = NULL;
+            return -1;
+        }
+        p = end + 1;
+    }
+    return n;
 }
 
 int main(int argc, char* argv[]) {
@@ -54,11 +84,15 @@ int main(int argc, char* argv[]) {
     double rec_rate = DEFAULT_REC_RATE;
     unsigned long seed = 0;  /* 0 means use time-based seed */
     const char* output_file = NULL;
+    const char* ancestor_file = NULL;
+    int all_individuals = 0;
+    double* rates = NULL;
+    int n_rates = 0;
     int verbose = 0;
 
     /* Parse command line options */
     int opt;
-    while ((opt = getopt(argc, argv, "c:r:s:o:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "c:r:R:s:o:A:avh")) != -1) {
         switch (opt) {
             case 'c':
                 n_chromosomes = atoi(optarg);
@@ -73,6 +107,20 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "Error: Recombination rate must be non-negative\n");
                     return 1;
                 }
+                break;
+            case 'R':
+                free(rates);
+                n_rates = parse_rates(optarg, &rates);
+                if (n_rates < 1) {
+                    fprintf(stderr, "Error: Invalid recombination rate list '%s'\n", optarg);
+                    return 1;
+                }
+                break;
+            case 'A':
+                ancestor_file = optarg;
+                break;
+            case 'a':
+                all_individuals = 1;
                 break;
             case 's':
                 seed = strtoul(optarg, NULL, 10);
@@ -101,6 +149,10 @@ int main(int argc, char* argv[]) {
 
     const char* ped_file = argv[optind];
 
+    if (rates) {
+        n_chromosomes = n_rates;
+    }
+
     /* Use time-based seed if not specified */
     if (seed == 0) {
         seed = (unsigned long)time(NULL);
@@ -123,7 +175,10 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Running simulation...\n");
     }
 
-    ped_simulation* sim = simulate_pedigree(ped_file, n_chromosomes, rec_rate, seed);
+    ped_simulation* sim = rates
+        ? simulate_pedigree_rates(ped_file, n_chromosomes, rates, seed)
+        : simulate_pedigree(ped_file, n_chromosomes, rec_rate, seed);
+    free(rates);
     if (!sim) {
         fprintf(stderr, "Error: Simulation failed\n");
         return 1;
@@ -135,6 +190,22 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "  Founders: %d\n", sim->ped->n_founders);
         fprintf(stderr, "  Chromosomes: %d\n", sim->n_chromosomes);
         fprintf(stderr, "\n");
+    }
+
+    if (ancestor_file) {
+        int to_stdout = strcmp(ancestor_file, "-") == 0;
+        FILE* af = to_stdout ? stdout : fopen(ancestor_file, "w");
+        if (!af) {
+            fprintf(stderr, "Error: Cannot open ancestor file '%s'\n", ancestor_file);
+            free_simulation(sim);
+            return 1;
+        }
+        print_ancestor_summary(sim, af, all_individuals);
+        if (!to_stdout) fclose(af);
+        if (!output_file) {
+            free_simulation(sim);
+            return 0;
+        }
     }
 
     /* Open output file */
