@@ -307,15 +307,18 @@ pedsim [options]
 | `-s SEED` | Random seed | time-based |
 | `-o FILE` | Output pedigree file | stdout |
 | `-d FILE` | Output DOT file for visualization | - |
-| `-S` | Print statistics to stderr | off |
-| `-E` | Print expected values | off |
+| `-S` | Print number of ancestors per generation to stderr | off |
+| `-E` | With `-S`, also print approximate expected numbers | off |
 | `-v` | Verbose output | off |
+
+pedsim is the single-population front end to the `pedsim_multipop` engine.
 
 **Output Format:**
 ```
 individualID fatherID motherID
 ```
-Founders have fatherID = motherID = 0.
+Founders (the generation-k ancestors) have fatherID = motherID = 0 and are listed
+first. Sampled individuals are named `S<i>`, ancestors `I<i>`.
 
 **Example:**
 ```bash
@@ -340,13 +343,36 @@ pedtrans [options] <pedigree_file>
 |--------|-------------|---------|
 | `-c NUM` | Number of chromosomes | 1 |
 | `-r RATE` | Recombination rate (crossovers/meiosis) | 1.0 |
+| `-R LIST` | Per-chromosome rates (map lengths in Morgans), comma-separated; overrides `-c` and `-r` | - |
 | `-s SEED` | Random seed | time-based |
 | `-o FILE` | Output file | stdout |
+| `-A FILE` | Write ancestor summary (`-` = stdout); segments are then written only if `-o` is given | - |
+| `-a` | With `-A`, summarize all individuals, not only those without children | off |
 | `-v` | Verbose output | off |
 
-**Example:**
+Crossovers follow a Poisson model (no interference) with a single map per chromosome.
+
+**Ancestor summary (`-A`):** one tab-separated row per individual:
+
+| Column | Meaning |
+|--------|---------|
+| `genealogical` | Founders in the individual's pedigree |
+| `genetic` | Founders contributing at least one segment to the genome |
+| `founder_haps` | Founder haplotypes contributing at least one segment |
+| `segments` | Segments over all chromosome copies |
+| `mean_per_chrom` | Mean number of distinct founders per chromosome copy |
+
+With a pedigree from `pedsim -k K`, the founders are the generation-K ancestors, so
+these are the numbers of genealogical and genetic ancestors K generations back.
+
+**Examples:**
 ```bash
-pedtrans -c 22 -r 1.5 pedigree.txt -o segments.txt
+pedtrans -c 22 -r 1.5 -o segments.txt pedigree.txt
+
+# Genetic ancestors 10 generations back with human-like autosome map lengths
+pedsim -n 1000 -N 10000000 -k 10 -o ped.txt
+pedtrans -R 2.86,2.68,2.23,2.15,2.04,1.92,1.87,1.68,1.66,1.81,1.58,1.75,1.25,1.20,1.41,1.34,1.28,1.17,1.08,1.08,0.62,0.74 \
+    -A ancestors.tsv ped.txt
 ```
 
 ---

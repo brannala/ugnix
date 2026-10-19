@@ -160,7 +160,7 @@ int run_pedsim_seq(pedsim_seq_params* params) {
     unsigned long coal_seed = params->seed + 1;
 
     snprintf(cmd, sizeof(cmd),
-             "./coalsim -c %d -N %d -r %g -m %g -s %lu -o %s 2>/dev/null",
+             "./coalsim -c %d -N %d -r %g -m %g -s %lu -o %s >/dev/null 2>&1",
              2 * n_founders, params->N, params->rec_rate, params->mut_rate,
              coal_seed, founders_file);
 
@@ -184,8 +184,8 @@ int run_pedsim_seq(pedsim_seq_params* params) {
     unsigned long pedtrans_seed = params->seed + 2;
 
     snprintf(cmd, sizeof(cmd),
-             "./pedtrans -r %g -s %lu %s -o %s 2>/dev/null",
-             params->pedtrans_rec, pedtrans_seed, ped_file, segments_file);
+             "./pedtrans -r %g -s %lu -o %s %s 2>/dev/null",
+             params->pedtrans_rec, pedtrans_seed, segments_file, ped_file);
 
     status = run_command(cmd, params->verbose);
     if (status != 0) {

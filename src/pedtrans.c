@@ -624,6 +624,7 @@ ped_simulation* create_simulation(void) {
     sim->chromosomes = NULL;
     sim->n_chromosomes = 1;
     sim->rec_rate = 1.0;
+    sim->rec_rates = NULL;
     sim->rng = NULL;
     sim->seed = 0;
 
@@ -643,6 +644,7 @@ void free_simulation(ped_simulation* sim) {
     }
 
     free_pedigree(sim->ped);
+    free(sim->rec_rates);
 
     if (sim->rng) {
         gsl_rng_free(sim->rng);
@@ -653,6 +655,16 @@ void free_simulation(ped_simulation* sim) {
 
 ped_simulation* simulate_pedigree(const char* ped_file, int n_chromosomes,
                                    double rec_rate, unsigned long seed) {
+    double* rates = malloc(n_chromosomes * sizeof(double));
+    if (!rates) return NULL;
+    for (int c = 0; c < n_chromosomes; c++) rates[c] = rec_rate;
+    ped_simulation* sim = simulate_pedigree_rates(ped_file, n_chromosomes, rates, seed);
+    free(rates);
+    return sim;
+}
+
+ped_simulation* simulate_pedigree_rates(const char* ped_file, int n_chromosomes,
+                                         const double* rec_rates, unsigned long seed) {
     ped_simulation* sim = create_simulation();
     if (!sim) return NULL;
 
@@ -664,7 +676,16 @@ ped_simulation* simulate_pedigree(const char* ped_file, int n_chromosomes,
     }
 
     sim->n_chromosomes = n_chromosomes;
-    sim->rec_rate = rec_rate;
+    sim->rec_rates = malloc(n_chromosomes * sizeof(double));
+    if (!sim->rec_rates) {
+        free_simulation(sim);
+        return NULL;
+    }
+    sim->rec_rate = 0.0;  /* mean rate, reported in the output header */
+    for (int c = 0; c < n_chromosomes; c++) {
+        sim->rec_rates[c] = rec_rates[c];
+        sim->rec_rate += rec_rates[c] / n_chromosomes;
+    }
 
     /* Initialize RNG */
     gsl_rng_env_setup();
@@ -721,7 +742,7 @@ ped_simulation* simulate_pedigree(const char* ped_file, int n_chromosomes,
                     sim->chromosomes[idx].paternal = meiosis(
                         sim->chromosomes[fidx].paternal,
                         sim->chromosomes[fidx].maternal,
-                        rec_rate, sim->rng);
+                        sim->rec_rates[chr], sim->rng);
                 } else {
                     /* Father unknown - shouldn't happen in valid pedigree */
                     sim->chromosomes[idx].paternal = NULL;
@@ -732,7 +753,7 @@ ped_simulation* simulate_pedigree(const char* ped_file, int n_chromosomes,
                     sim->chromosomes[idx].maternal = meiosis(
                         sim->chromosomes[midx].paternal,
                         sim->chromosomes[midx].maternal,
-                        rec_rate, sim->rng);
+                        sim->rec_rates[chr], sim->rng);
                 } else {
                     /* Mother unknown - shouldn't happen in valid pedigree */
                     sim->chromosomes[idx].maternal = NULL;
@@ -841,4 +862,100 @@ void print_all_segments(ped_simulation* sim, FILE* out) {
         print_individual_segments(sim, id, out);
         fprintf(out, "\n");
     }
+}
+
+/*
+ * Mark individual's founder ancestors with stamp; returns number of new
+ * founders marked. Iterative DFS over parents.
+ */
+static int count_founder_ancestors(pedigree* ped, int id, int* stack,
+                                   int* visited, int stamp) {
+    int n = 0, top = 0;
+    stack[top++] = id;
+    visited[id] = stamp;
+    while (top > 0) {
+        ped_indiv* indiv = &ped->individuals[stack[--top]];
+        if (indiv->is_founder) {
+            n++;
+            continue;
+        }
+        int parents[2] = { indiv->father_id, indiv->mother_id };
+        for (int p = 0; p < 2; p++) {
+            if (parents[p] >= 0 && visited[parents[p]] != stamp) {
+                visited[parents[p]] = stamp;
+                stack[top++] = parents[p];
+            }
+        }
+    }
+    return n;
+}
+
+void print_ancestor_summary(ped_simulation* sim, FILE* out, int all_individuals) {
+    pedigree* ped = sim->ped;
+    int n = ped->n_individuals;
+    int nf = ped->n_founders;
+    int n_copies = 2 * sim->n_chromosomes;
+
+    /* Stamp arrays avoid clearing per individual / chromosome copy */
+    int* stack = malloc(n * sizeof(int));
+    int* visited = calloc(n, sizeof(int));
+    int* founder_seen = calloc(nf, sizeof(int));
+    int* hap_seen = calloc(2 * nf, sizeof(int));
+    int* copy_seen = calloc(nf, sizeof(int));
+    if (!stack || !visited || !founder_seen || !hap_seen || !copy_seen) {
+        fprintf(stderr, "Error: memory allocation failed\n");
+        free(stack); free(visited); free(founder_seen); free(hap_seen); free(copy_seen);
+        return;
+    }
+
+    fprintf(out, "# Ancestor summary: %d chromosomes, mean crossovers/meiosis %.4f\n",
+            sim->n_chromosomes, sim->rec_rate);
+    fprintf(out, "# genealogical: founders in the individual's pedigree\n");
+    fprintf(out, "# genetic: founders contributing >= 1 segment to the genome\n");
+    fprintf(out, "# founder_haps: founder haplotypes contributing >= 1 segment\n");
+    fprintf(out, "# segments: segments over all %d chromosome copies\n", n_copies);
+    fprintf(out, "# mean_per_chrom: mean distinct founders per chromosome copy\n");
+    fprintf(out, "individual\tgenealogical\tgenetic\tfounder_haps\tsegments\tmean_per_chrom\n");
+
+    int stamp = 0, copy_stamp = 0;
+    for (int i = 0; i < n; i++) {
+        int id = ped->topo_order[i];
+        if (!all_individuals && ped->n_children[id] > 0) continue;
+        stamp++;
+
+        int genealogical = count_founder_ancestors(ped, id, stack, visited, stamp);
+        int genetic = 0, haps = 0, segments = 0;
+        long per_copy_total = 0;
+
+        for (int c = 0; c < sim->n_chromosomes; c++) {
+            diploid_chromosomes* dc = &sim->chromosomes[id * sim->n_chromosomes + c];
+            ped_chromosome* copies[2] = { dc->paternal, dc->maternal };
+            for (int h = 0; h < 2; h++) {
+                ped_chromosome* chr = copies[h];
+                copy_stamp++;
+                segments += chr->n_segments;
+                for (int s = 0; s < chr->n_segments; s++) {
+                    founder_origin o = chr->segments[s].origin;
+                    if (founder_seen[o.founder_id] != stamp) {
+                        founder_seen[o.founder_id] = stamp;
+                        genetic++;
+                    }
+                    if (hap_seen[2 * o.founder_id + o.homolog] != stamp) {
+                        hap_seen[2 * o.founder_id + o.homolog] = stamp;
+                        haps++;
+                    }
+                    if (copy_seen[o.founder_id] != copy_stamp) {
+                        copy_seen[o.founder_id] = copy_stamp;
+                        per_copy_total++;
+                    }
+                }
+            }
+        }
+
+        fprintf(out, "%s\t%d\t%d\t%d\t%d\t%.4f\n", ped->id_to_name[id],
+                genealogical, genetic, haps, segments,
+                (double)per_copy_total / n_copies);
+    }
+
+    free(stack); free(visited); free(founder_seen); free(hap_seen); free(copy_seen);
 }
